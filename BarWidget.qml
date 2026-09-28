@@ -745,7 +745,7 @@ Panel {
             width: parent.width
             text: store.installBusy ? "Installing in the terminal…" : "Install missing clients: " + store.missingPackages.join(", ")
             iconText: "󰇚"
-            tooltipText: "Opens a terminal that shows the pacman command and asks before running it"
+            tooltipText: "Opens a terminal that shows the install command (omarchy pkg add) and asks before running it"
             bordered: true
             enabled: !store.installBusy
             foreground: root.foreground

@@ -8,7 +8,7 @@
 #   rc-steps <action> [args...] [+ <action> [args...]]...
 #
 # Actions:
-#   install <package>...          sudo pacman -S --needed ...
+#   install <package>...          omarchy pkg add ... (Omarchy's installer)
 #   ssh-enable lan|tailscale      start + enable sshd, open its port
 #   ssh-disable                   stop + disable sshd, close its port
 #   keys-on | keys-off            turn SSH password logins off / back on
@@ -99,7 +99,7 @@ plan() {
       for pkg in "$@"; do
         [[ $pkg =~ ^[a-z0-9][a-z0-9+._-]*$ ]] || die "invalid package name: $pkg"
       done
-      step "Install $* from the Arch repositories" "sudo pacman -S --needed $*"
+      step "Install $* with Omarchy's package installer (it runs sudo pacman for whatever is missing)" "omarchy pkg add $*"
       ;;
 
     ssh-enable)

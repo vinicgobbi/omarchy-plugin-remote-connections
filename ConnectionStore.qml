@@ -138,7 +138,7 @@ Item {
     installPackages([Model.clientPackage(protocol)])
   }
 
-  // Opens a terminal showing the pacman command and asking before it runs
+  // Opens a terminal showing the install command (omarchy pkg add) and asking before it runs
   // (bin/rc-terminal); re-checks the clients once it's closed.
   function installPackages(pkgs) {
     var list = (pkgs || []).filter(function(p) { return p !== "" })

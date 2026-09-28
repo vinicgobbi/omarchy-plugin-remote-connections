@@ -64,7 +64,8 @@ omarchy plugin validate .
 - `bin/rc-ssh-hosts` — lists concrete `Host` aliases from `~/.ssh/config`
   and its `Include`s (read-only)
 - `bin/rc-steps` — plans system changes without running anything: one
-  `description<TAB>command` per step (sshd, the *Keys only* drop-in, pacman,
+  `description<TAB>command` per step (sshd, the *Keys only* drop-in,
+  `omarchy pkg add` for packages,
   ufw rules tagged `omarchy-remote-connections <ssh|vnc>` — the only rules
   it removes). Actions can be chained with `+`
 - `bin/rc-terminal` — opens an Omarchy floating terminal running

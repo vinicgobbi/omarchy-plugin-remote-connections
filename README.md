@@ -106,7 +106,7 @@ never does them silently. Here's what to expect:
 
 | When | What happens | Why |
 |---|---|---|
-| First RDP or VNC connection | The row shows *Needs the 'freerdp' package* (or `tigervnc`); install opens the [command terminal](#how-system-changes-are-made) with the `pacman` command, and **sudo** asks for your password | The plugin doesn't install anything without you seeing it |
+| First RDP or VNC connection | The row shows *Needs the 'freerdp' package* (or `tigervnc`); install opens the [command terminal](#how-system-changes-are-made) with the `omarchy pkg add` command, and **sudo** asks for your password | The plugin doesn't install anything without you seeing it |
 | Saving an RDP/VNC password | The GNOME keyring may ask you to **unlock** it | The password is stored in the keyring, not in `connections.json` |
 | Keyring locked when connecting | A notification says so, and the RDP/VNC client asks for the password itself | Nothing is stored anywhere else as a fallback |
 | First SSH connection to a host | The terminal asks you to confirm the host's **fingerprint** (`yes`) | Protection against man-in-the-middle; the plugin never turns it off |
