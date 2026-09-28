@@ -116,6 +116,10 @@ Item {
     return true
   }
 
+  function copyText(text) {
+    Quickshell.execDetached(["wl-copy", "--", String(text)])
+  }
+
   function installClient(protocol) {
     var pkg = Model.clientPackage(protocol)
     if (pkg === "") return

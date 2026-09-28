@@ -53,12 +53,22 @@ omarchy plugin validate .
   installed, reads `~/.ssh/config` hosts, launches connections and queues
   keyring operations. The bar widget and the launcher each have their own
   instance; they stay in sync through the file (watched for changes)
+- `HostService.qml` — the *This machine* section's state (polled from
+  `bin/rc-host-status`) and actions, run one at a time; privileged ones go
+  through `pkexec bin/rc-host`
 - `Model.js` — pure helpers (normalize, validate, sort, filter, the JSON
   handed to `rc-connect`); no QML types, so it can be tested with `node`
 - `bin/rc-connect` — opens one connection: ssh in a terminal, FreeRDP with
   its arguments on stdin, TigerVNC with the password in its environment
 - `bin/rc-ssh-hosts` — lists concrete `Host` aliases from `~/.ssh/config`
   and its `Include`s (read-only)
+- `bin/rc-host` — the only script that runs as root (via pkexec): start/stop
+  sshd, the *Keys only* drop-in, and ufw rules tagged
+  `omarchy-remote-connections <ssh|vnc>` (the only rules it removes)
+- `bin/rc-host-status` — unprivileged status snapshot (`key<TAB>value`);
+  reads ufw's world-readable rule files, never the keyring
+- `bin/rc-vnc` — start/stop wayvnc as the transient user unit
+  `omarchy-remote-wayvnc`, with its own control socket
 - `bin/rc-secret` — set/get/clear a password in the GNOME keyring via
   `secret-tool` (password on stdin, never argv)
 

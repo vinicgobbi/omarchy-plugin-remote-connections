@@ -1,0 +1,137 @@
+#!/bin/bash
+
+# Privileged half of "This machine": run through pkexec from the bar widget,
+# so the polkit dialog asks for the admin password once per action.
+#
+#   rc-host ssh-enable lan|tailscale     start + enable sshd, open its port
+#   rc-host ssh-disable                  stop + disable sshd, close its port
+#   rc-host ssh-keys-only on|off         turn password logins off/on
+#   rc-host vnc-firewall lan|tailscale <port>
+#   rc-host vnc-firewall close
+#
+# Firewall rules this script adds carry the comment
+# "omarchy-remote-connections <ssh|vnc>", and only rules with that comment
+# are ever removed — rules you added yourself are left alone.
+
+set -uo pipefail
+
+TAG="omarchy-remote-connections"
+DROPIN="/etc/ssh/sshd_config.d/90-omarchy-remote-connections.conf"
+
+die() {
+  echo "$*" >&2
+  exit 1
+}
+
+[[ $EUID -eq 0 ]] || die "rc-host must run as root (through pkexec)"
+
+uid=${PKEXEC_UID:-}
+[[ $uid =~ ^[0-9]+$ ]] || die "rc-host: PKEXEC_UID is not set; run it through pkexec"
+home=$(getent passwd "$uid" | cut -d: -f6)
+[[ -n $home ]] || die "rc-host: can't find the home of uid $uid"
+
+ufw_active() {
+  command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'
+}
+
+# Remove every ufw rule tagged "<TAG> <what>", highest number first so the
+# numbering of the ones still to delete doesn't shift.
+ufw_close() {
+  local what=$1 n
+  ufw_active || return 0
+  while read -r n; do
+    ufw --force delete "$n" >/dev/null || die "Couldn't delete firewall rule $n"
+  done < <(ufw status numbered | grep -F "# $TAG $what" | sed -nE 's/^\[ *([0-9]+)\].*/\1/p' | sort -rn)
+}
+
+ufw_open() {
+  local what=$1 scope=$2 port=$3
+  ufw_active || return 0
+  ufw_close "$what"
+  case "$scope" in
+    lan)
+      ufw allow "$port/tcp" comment "$TAG $what" >/dev/null
+      ;;
+    tailscale)
+      ufw allow in on tailscale0 to any port "$port" proto tcp comment "$TAG $what" >/dev/null
+      ;;
+  esac || die "Couldn't add the firewall rule for port $port"
+}
+
+check_scope() {
+  [[ $1 == lan || $1 == tailscale ]] || die "scope must be 'lan' or 'tailscale'"
+}
+
+check_port() {
+  if ! [[ $1 =~ ^[0-9]+$ ]] || (( $1 < 1 || $1 > 65535 )); then
+    die "invalid port: $1"
+  fi
+}
+
+ssh_port() {
+  local port
+  port=$(sshd -T 2>/dev/null | awk '$1 == "port" { print $2; exit }')
+  echo "${port:-22}"
+}
+
+action=${1:-}
+shift || true
+
+case "$action" in
+  ssh-enable)
+    scope=${1:-}
+    check_scope "$scope"
+    systemctl enable --now sshd.service || die "Couldn't start sshd"
+    ufw_open ssh "$scope" "$(ssh_port)"
+    ;;
+
+  ssh-disable)
+    systemctl disable --now sshd.service || die "Couldn't stop sshd"
+    ufw_close ssh
+    ;;
+
+  ssh-keys-only)
+    case "${1:-}" in
+      on)
+        # Refuse to lock the user out: key-only login needs at least one key.
+        keys="$home/.ssh/authorized_keys"
+        grep -qE '^[[:space:]]*[^#[:space:]]' "$keys" 2>/dev/null \
+          || die "No keys in $keys yet — add one before turning password logins off."
+        printf '%s\n' \
+          "# Managed by the Omarchy Remote Connections plugin (Keys only)." \
+          "# Remove this file, or turn the option off in the plugin, to allow passwords again." \
+          "PasswordAuthentication no" \
+          "KbdInteractiveAuthentication no" >"$DROPIN"
+        if ! sshd -t 2>/dev/null; then
+          rm -f "$DROPIN"
+          die "sshd rejected the new configuration; nothing was changed."
+        fi
+        ;;
+      off)
+        rm -f "$DROPIN"
+        ;;
+      *)
+        die "usage: rc-host ssh-keys-only on|off"
+        ;;
+    esac
+    if systemctl is-active --quiet sshd.service; then
+      systemctl reload sshd.service || die "Couldn't reload sshd"
+    fi
+    ;;
+
+  vnc-firewall)
+    scope=${1:-}
+    if [[ $scope == close ]]; then
+      ufw_close vnc
+    else
+      check_scope "$scope"
+      port=${2:-}
+      check_port "$port"
+      ufw_open vnc "$scope" "$port"
+    fi
+    ;;
+
+  *)
+    die "usage: rc-host ssh-enable|ssh-disable|ssh-keys-only|vnc-firewall ..."
+    ;;
+esac
