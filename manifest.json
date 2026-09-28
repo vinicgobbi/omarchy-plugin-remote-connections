@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "id": "vinicgobbi.remote-connections",
+  "name": "Remote Connections",
+  "version": "0.1.0",
+  "author": "vinicgobbi",
+  "license": "MIT",
+  "homepage": "https://github.com/vinicgobbi/omarchy-plugin-remote-connections",
+  "description": "Save SSH, RDP and VNC connections and open any of them from the bar, with passwords kept in the GNOME keyring.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Remote Connections",
+    "description": "Saved SSH/RDP/VNC connections, one click to connect.",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right"
+  }
+}

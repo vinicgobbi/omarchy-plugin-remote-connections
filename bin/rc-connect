@@ -1,0 +1,134 @@
+#!/bin/bash
+
+# Open one saved connection. The bar widget runs it through `uwsm-app` so
+# the client lives in its own systemd unit and survives an omarchy-shell
+# restart. The connection comes as JSON (no secrets in it — see
+# Model.connectPayload):
+#
+#   rc-connect '<json>'
+#
+# Passwords come from the keyring (bin/rc-secret) and never reach argv:
+# FreeRDP reads its whole command line from stdin (/args-from:stdin) and
+# TigerVNC reads VNC_USERNAME/VNC_PASSWORD from its own environment.
+
+set -uo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-remote-connections"
+
+notify() {
+  notify-send -a "Remote Connections" -i network-server "$@" 2>/dev/null || true
+}
+
+fail() {
+  notify -u critical "Couldn't connect" "$1"
+  echo "$1" >&2
+  exit 1
+}
+
+conn=${1:-}
+[[ -n $conn ]] || fail "rc-connect: missing connection JSON"
+
+field() { jq -r "$1 // empty" <<<"$conn"; }
+
+id=$(field .id)
+name=$(field .name)
+protocol=$(field .protocol)
+host=$(field .host)
+port=$(field .port)
+user=$(field .user)
+has_secret=$(field .hasSecret)
+
+[[ -n $host ]] || fail "Connection has no host"
+# Model.validate already rejects these; checked again here since this script
+# builds command lines from them.
+[[ $host != -* && $user != -* ]] || fail "Host/user can't start with '-'"
+
+password=""
+if [[ $has_secret == "true" && $protocol != "ssh" ]]; then
+  password=$("$here/rc-secret" get "$id" 2>/dev/null) || {
+    notify "Keyring locked or password missing" "$name: the client will ask for the password."
+    password=""
+  }
+  if [[ $password == *$'\n'* ]]; then
+    fail "Stored password for $name contains a line break, which the RDP/VNC clients can't take."
+  fi
+fi
+
+first_available() {
+  local bin
+  for bin in "$@"; do
+    if command -v "$bin" >/dev/null 2>&1; then
+      echo "$bin"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Run a GUI client, keeping its output in a per-protocol log and reporting
+# a failed exit (bad password, unreachable host, rejected certificate...).
+run_client() {
+  mkdir -p "$log_dir"
+  local log="$log_dir/last-$protocol.log"
+  "$@" >"$log" 2>&1
+  local status=$?
+  # FreeRDP exits with 12/13 (logoff/disconnect by user) on a normal close.
+  if (( status != 0 && status != 12 && status != 13 )); then
+    notify -u critical "$name: connection ended with an error" "Exit code $status. Details: $log"
+  fi
+  return "$status"
+}
+
+case "$protocol" in
+  ssh)
+    args=(ssh)
+    [[ -n $port && $port != 22 ]] && args+=(-p "$port")
+    identity=$(field .identityFile)
+    jump=$(field .jumpHost)
+    [[ -n $identity ]] && args+=(-i "${identity/#\~/$HOME}")
+    [[ -n $jump ]] && args+=(-J "$jump")
+    args+=(-- "${user:+$user@}$host")
+
+    # Keep the terminal open when ssh fails so the error stays readable.
+    # shellcheck disable=SC2016 # expanded by the inner bash -c, not here
+    wrapper='"$@"; status=$?; if (( status != 0 )); then echo; read -rsn1 -p "ssh exited with $status — press any key to close"; fi'
+    exec xdg-terminal-exec --app-id=org.omarchy.remote-connections \
+      --title="SSH · $name" -e bash -c "$wrapper" rc-ssh "${args[@]}"
+    ;;
+
+  rdp)
+    client=$(first_available sdl-freerdp3 xfreerdp3) || fail "No RDP client found. Install the 'freerdp' package."
+    domain=$(field .rdp.domain)
+    args=(
+      "/v:$host:${port:-3389}"
+      "/t:$name"
+      /dynamic-resolution
+      /cert:tofu
+    )
+    [[ -n $user ]] && args+=("/u:$user")
+    [[ -n $domain ]] && args+=("/d:$domain")
+    [[ -n $password ]] && args+=("/p:$password")
+    [[ $(field .rdp.clipboard) != "false" ]] && args+=(+clipboard)
+    [[ $(field .rdp.multimon) == "true" ]] && args+=(/multimon)
+
+    printf '%s\n' "${args[@]}" | run_client "$client" /args-from:stdin
+    ;;
+
+  vnc)
+    client=$(first_available vncviewer) || fail "No VNC client found. Install the 'tigervnc' package."
+    args=()
+    [[ $(field .vnc.viewOnly) == "true" ]] && args+=(-ViewOnly)
+    args+=("$host::${port:-5900}")
+
+    if [[ -n $password ]]; then
+      export VNC_PASSWORD=$password
+      [[ -n $user ]] && export VNC_USERNAME=$user
+    fi
+    run_client "$client" "${args[@]}"
+    ;;
+
+  *)
+    fail "Unknown protocol: $protocol"
+    ;;
+esac
