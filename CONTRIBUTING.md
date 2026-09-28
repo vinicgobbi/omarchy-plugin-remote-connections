@@ -24,6 +24,13 @@ git -C ~/.config/omarchy/plugins/vinicgobbi.remote-connections pull dev main
 `BarWidget.qml` (the plugin's entry point, `ConnectionStore.qml` included)
 hot-reloads on its own once the installed copy is updated.
 
+**Adding a new `.qml` file** (or a new entry point) needs a full shell
+restart: `omarchy restart shell`. The hot reload doesn't clear Qt's cached
+directory listing of the plugin folder, so a file that didn't exist the first
+time the folder was loaded fails with a misleading
+`QuickConnect.qml: File name case mismatch` in `qs log -p $OMARCHY_PATH/shell`.
+Edits to files that already existed reload fine.
+
 Validate the manifest before publishing:
 
 ```bash
