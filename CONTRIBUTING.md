@@ -21,15 +21,16 @@ git -C ~/.config/omarchy/plugins/vinicgobbi.remote-connections remote add dev "$
 git -C ~/.config/omarchy/plugins/vinicgobbi.remote-connections pull dev main
 ```
 
-`BarWidget.qml` (the plugin's entry point, `ConnectionStore.qml` included)
-hot-reloads on its own once the installed copy is updated.
+**After pulling changes, restart the shell: `omarchy restart shell`.** The
+Omarchy shell does notice the files changing and reloads the plugin, but
+its reload never clears Qt's component cache (`Qt.clearComponentCache()`
+isn't callable from QML, so that line in `shell.qml` never runs). The result:
 
-**Adding a new `.qml` file** (or a new entry point) needs a full shell
-restart: `omarchy restart shell`. The hot reload doesn't clear Qt's cached
-directory listing of the plugin folder, so a file that didn't exist the first
-time the folder was loaded fails with a misleading
-`QuickConnect.qml: File name case mismatch` in `qs log -p $OMARCHY_PATH/shell`.
-Edits to files that already existed reload fine.
+- edits to existing `.qml`/`.js` files keep running the **old** code until
+  a restart;
+- a **new** `.qml` file fails to load with a misleading
+  `File name case mismatch` in `qs log -p $OMARCHY_PATH/shell` (Qt's cached
+  listing of the plugin folder predates the file).
 
 Validate the manifest before publishing:
 

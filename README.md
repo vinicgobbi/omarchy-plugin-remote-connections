@@ -75,6 +75,10 @@ omarchy plugin add https://github.com/vinicgobbi/omarchy-plugin-remote-connectio
 omarchy plugin enable vinicgobbi.remote-connections
 ```
 
+After installing or **updating** the plugin, run `omarchy restart shell`:
+the shell's automatic reload keeps running the previous version of the code
+until it restarts.
+
 ## Keyboard shortcut
 
 The plugin doesn't touch your Hyprland config, so add the shortcut yourself
