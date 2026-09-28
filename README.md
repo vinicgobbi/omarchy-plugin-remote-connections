@@ -48,8 +48,25 @@ computer** on and off:
   (RSA-AES or TLS, whichever the viewer supports).
 - While someone is viewing your screen, the bar icon turns red and its
   tooltip says from where; one click disconnects every viewer.
-- Everything that needs root is confirmed in the popup first, telling you it
-  will ask for your admin password.
+- Nothing that needs root runs behind your back: see
+  [How system changes are made](#how-system-changes-are-made).
+
+### How system changes are made
+
+Anything that needs `sudo` — installing a client, turning the SSH server
+on/off, *Keys only*, opening/closing a firewall port — opens an **Omarchy
+floating terminal** that:
+
+1. lists every step with the **exact command** it will run (the text you see
+   is what executes — no hidden helper runs as root);
+2. warns that these commands change your system and that you should **only
+   run them if you know what they do**;
+3. lets you **run all steps**, **confirm each step** (and skip any), or
+   **cancel** without changing anything.
+
+`sudo` asks for your password in that terminal. Several changes at once
+(e.g. *Install missing clients* installs every client your saved
+connections need) show up as one list.
 
 ## Install
 
@@ -85,14 +102,14 @@ never does them silently. Here's what to expect:
 
 | When | What happens | Why |
 |---|---|---|
-| First RDP or VNC connection | The row shows *Needs the 'freerdp' package* (or `tigervnc`); clicking install opens a terminal that asks for your **sudo** password | The plugin doesn't install anything without you seeing it |
+| First RDP or VNC connection | The row shows *Needs the 'freerdp' package* (or `tigervnc`); install opens the [command terminal](#how-system-changes-are-made) with the `pacman` command, and **sudo** asks for your password | The plugin doesn't install anything without you seeing it |
 | Saving an RDP/VNC password | The GNOME keyring may ask you to **unlock** it | The password is stored in the keyring, not in `connections.json` |
 | Keyring locked when connecting | A notification says so, and the RDP/VNC client asks for the password itself | Nothing is stored anywhere else as a fallback |
 | First SSH connection to a host | The terminal asks you to confirm the host's **fingerprint** (`yes`) | Protection against man-in-the-middle; the plugin never turns it off |
 | First RDP connection to a host | The server certificate is trusted on first use (`/cert:tofu`); if it **changes** later, the connection is refused | Same idea as SSH host keys |
-| Turning the SSH server on/off, *Keys only*, or screen sharing beyond this computer | The popup asks you to confirm, then the **polkit dialog asks for your admin password** (once per action) | Starting `sshd`, editing its config and changing firewall rules need root |
+| Turning the SSH server on/off, *Keys only*, or screen sharing beyond this computer | You pick the options in the popup, then the [command terminal](#how-system-changes-are-made) shows the exact commands; you choose to run them all, one by one, or cancel, and **sudo** asks for your password | Starting `sshd`, editing its config and changing firewall rules need root |
 | Turning on *Keys only* | Needs at least one key in `~/.ssh/authorized_keys` first (run `ssh-copy-id you@this-machine` from the other computer) | Otherwise you'd lock yourself out |
-| First screen sharing | Install `wayvnc` (terminal asks for **sudo**) and choose a **password** viewers must type | wayvnc always runs with authentication on |
+| First screen sharing | Install `wayvnc` (through the command terminal) and choose a **password** viewers must type | wayvnc always runs with authentication on |
 | Someone views your screen | The bar icon turns **red**; nothing hides it | You should always know when your screen is being watched |
 | Quick-connect shortcut | You add the keybinding line yourself (see [Keyboard shortcut](#keyboard-shortcut)) | The plugin doesn't edit your Hyprland config |
 | SSH login | SSH passwords aren't stored. Set up a key: `ssh-keygen`, then `ssh-copy-id user@host` | Keys are safer, and ssh-agent handles them for you |

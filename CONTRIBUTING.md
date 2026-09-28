@@ -54,17 +54,25 @@ omarchy plugin validate .
   keyring operations. The bar widget and the launcher each have their own
   instance; they stay in sync through the file (watched for changes)
 - `HostService.qml` — the *This machine* section's state (polled from
-  `bin/rc-host-status`) and actions, run one at a time; privileged ones go
-  through `pkexec bin/rc-host`
+  `bin/rc-host-status`) and actions, run one at a time; anything needing
+  sudo goes through `bin/rc-terminal`
 - `Model.js` — pure helpers (normalize, validate, sort, filter, the JSON
   handed to `rc-connect`); no QML types, so it can be tested with `node`
 - `bin/rc-connect` — opens one connection: ssh in a terminal, FreeRDP with
   its arguments on stdin, TigerVNC with the password in its environment
 - `bin/rc-ssh-hosts` — lists concrete `Host` aliases from `~/.ssh/config`
   and its `Include`s (read-only)
-- `bin/rc-host` — the only script that runs as root (via pkexec): start/stop
-  sshd, the *Keys only* drop-in, and ufw rules tagged
-  `omarchy-remote-connections <ssh|vnc>` (the only rules it removes)
+- `bin/rc-steps` — plans system changes without running anything: one
+  `description<TAB>command` per step (sshd, the *Keys only* drop-in, pacman,
+  ufw rules tagged `omarchy-remote-connections <ssh|vnc>` — the only rules
+  it removes). Actions can be chained with `+`
+- `bin/rc-terminal` — opens an Omarchy floating terminal running
+  `bin/rc-run-steps`, waits for it and exits with its outcome
+  (0 done, 1 failed, 2 canceled, 3 closed, 4 some steps skipped)
+- `bin/rc-run-steps` — the terminal side: lists the steps and exact
+  commands, warns, asks *run all / confirm each / cancel*, then runs each
+  command with `bash -c` exactly as shown. No script of the plugin ever runs
+  as root; only the listed `sudo` commands do
 - `bin/rc-host-status` — unprivileged status snapshot (`key<TAB>value`);
   reads ufw's world-readable rule files, never the keyring
 - `bin/rc-vnc` — start/stop wayvnc as the transient user unit

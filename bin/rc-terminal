@@ -1,0 +1,59 @@
+#!/bin/bash
+
+# Open an Omarchy floating terminal that shows and (after you confirm) runs
+# the steps for one or more actions — see bin/rc-steps and bin/rc-run-steps.
+# Blocks until that terminal is done, then reports the outcome:
+#
+#   rc-terminal <title> <action> [args...] [+ <action> ...]
+#
+# Exit status: 0 done, 2 canceled, 3 window closed/never started,
+# 4 done with skipped steps, 1 failed (message on stderr).
+
+set -uo pipefail
+
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+title=${1:?title}
+shift
+
+run_dir="${XDG_RUNTIME_DIR:-/run/user/$UID}/omarchy-remote-connections"
+mkdir -p "$run_dir"
+token="$(date +%s%N)-$$"
+pid_file="$run_dir/run-$token.pid"
+result_file="$run_dir/run-$token.result"
+trap 'rm -f "$run_dir/run-$token".*' EXIT
+
+# Same app-id as Omarchy's own floating terminals, so it opens centered
+# and floating.
+uwsm-app -- xdg-terminal-exec --app-id=org.omarchy.terminal --title="Remote Connections" \
+  -e "$here/rc-run-steps" "$token" "$title" "$@" >/dev/null 2>&1 &
+
+# Some terminals return right away (single-instance servers), so don't rely
+# on the launcher: wait for the step runner to report its pid, then for it
+# to exit.
+for _ in $(seq 1 60); do
+  [[ -s $pid_file ]] && break
+  sleep 0.5
+done
+if [[ ! -s $pid_file ]]; then
+  echo "The terminal didn't open." >&2
+  exit 3
+fi
+pid=$(<"$pid_file")
+while kill -0 "$pid" 2>/dev/null; do
+  sleep 0.5
+done
+
+result=$(cat "$result_file" 2>/dev/null)
+case "$result" in
+  ok) exit 0 ;;
+  partial) exit 4 ;;
+  canceled) exit 2 ;;
+  failed*)
+    echo "${result#failed$'\t'}" >&2
+    exit 1
+    ;;
+  *)
+    echo "The terminal was closed before finishing." >&2
+    exit 3
+    ;;
+esac

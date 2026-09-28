@@ -3,11 +3,10 @@ import Quickshell
 import Quickshell.Io
 
 // "This machine": state of the SSH server and screen sharing (wayvnc), and
-// the actions that change them. Privileged actions go through
-// `pkexec bin/rc-host ...` (the shell's polkit agent asks for the admin
-// password); screen sharing itself runs as the user (bin/rc-vnc).
-// Everything runs one job at a time, and the UI always asks before a job
-// that triggers a password prompt.
+// the actions that change them. Anything that needs sudo or installs a
+// package opens an Omarchy terminal (bin/rc-terminal) that shows the exact
+// commands and only runs them once the user confirms there; screen sharing
+// itself runs as the user (bin/rc-vnc). Jobs run one at a time.
 Item {
   id: root
 
@@ -79,14 +78,17 @@ Item {
     jobProcess.running = true
   }
 
-  function privileged(args) {
-    return ["pkexec", bundledPath("bin/rc-host")].concat(args)
+  // Runs `args` (see bin/rc-steps) in a terminal that shows the commands
+  // and asks before running them.
+  function inTerminal(title, args) {
+    return [bundledPath("bin/rc-terminal"), title].concat(args)
   }
 
-  // pkexec exits 126/127 when the dialog is dismissed or auth fails.
+  // Exit codes from bin/rc-terminal.
   function describeFailure(exitCode, errText, what) {
-    if (exitCode === 126 || exitCode === 127)
-      return what + " was canceled (no admin password given)."
+    if (exitCode === 2) return what + " was canceled in the terminal; nothing was changed."
+    if (exitCode === 3) return what + ": the terminal was closed before it finished. Check the state below."
+    if (exitCode === 4) return what + " finished with some steps skipped."
     return errText !== "" ? errText : what + " failed (exit code " + exitCode + ")."
   }
 
@@ -105,21 +107,21 @@ Item {
     lastError = ""
     sshScope = scope === "tailscale" ? "tailscale" : "lan"
     savePrefs()
-    run("ssh", privileged(["ssh-enable", sshScope]), function(ok, code, err) {
+    run("ssh", inTerminal("Turn on the SSH server", ["ssh-enable", sshScope]), function(ok, code, err) {
       if (!ok) lastError = describeFailure(code, err, "Turning on the SSH server")
     })
   }
 
   function disableSsh() {
     lastError = ""
-    run("ssh", privileged(["ssh-disable"]), function(ok, code, err) {
+    run("ssh", inTerminal("Turn off the SSH server", ["ssh-disable"]), function(ok, code, err) {
       if (!ok) lastError = describeFailure(code, err, "Turning off the SSH server")
     })
   }
 
   function setKeysOnly(on) {
     lastError = ""
-    run("keys", privileged(["ssh-keys-only", on ? "on" : "off"]), function(ok, code, err) {
+    run("keys", inTerminal(on ? "SSH: keys only" : "SSH: allow passwords again", [on ? "keys-on" : "keys-off"]), function(ok, code, err) {
       if (!ok) lastError = describeFailure(code, err, "Changing password logins")
     })
   }
@@ -158,11 +160,11 @@ Item {
       // drop any rule for another scope). If that's canceled, don't leave a
       // server running that the user thinks is unreachable.
       if (scope === "local") {
-        if (vncFirewall !== "none") run("vnc", privileged(["vnc-firewall", "close"]), null)
+        if (vncFirewall !== "none") run("vnc", inTerminal("Close the old screen-sharing port", ["vnc-firewall", "close"]), null)
         return
       }
       if (!ufwEnabled) return
-      run("vnc", privileged(["vnc-firewall", scope, port]), function(fwOk, fwCode, fwErr) {
+      run("vnc", inTerminal("Open the firewall for screen sharing", ["vnc-firewall", scope, port]), function(fwOk, fwCode, fwErr) {
         if (fwOk) return
         lastError = describeFailure(fwCode, fwErr, "Opening the firewall for screen sharing") + " Screen sharing was stopped."
         run("vnc", [bundledPath("bin/rc-vnc"), "stop"], null)
@@ -170,11 +172,13 @@ Item {
     })
   }
 
+  // Stopping is immediate (no terminal): only closing the firewall port,
+  // if one was opened, goes through the terminal afterwards.
   function stopVnc() {
     lastError = ""
     run("vnc", [bundledPath("bin/rc-vnc"), "stop"], null)
     if (vncFirewall !== "none")
-      run("vnc", privileged(["vnc-firewall", "close"]), function(ok, code, err) {
+      run("vnc", inTerminal("Close the screen-sharing port", ["vnc-firewall", "close"]), function(ok, code, err) {
         if (!ok) lastError = describeFailure(code, err, "Closing the screen-sharing firewall port") + " The port stays open, but nothing is listening on it."
       })
   }
@@ -184,7 +188,10 @@ Item {
   }
 
   function installPackage(pkg) {
-    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", "omarchy-pkg-add " + pkg])
+    lastError = ""
+    run("install", inTerminal("Install " + pkg, ["install", pkg]), function(ok, code, err) {
+      if (!ok) lastError = describeFailure(code, err, "Installing " + pkg)
+    })
   }
 
   function applyStatus(text) {

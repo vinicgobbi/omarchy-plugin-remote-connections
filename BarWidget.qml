@@ -183,8 +183,9 @@ Panel {
     cancelDelete()
   }
 
-  // --- "This machine": every privileged action is confirmed inline first,
-  // with a note that it will ask for the admin password. ---
+  // --- "This machine": options are picked inline; anything needing sudo
+  // then opens a terminal that lists the exact commands and asks again
+  // before running them (bin/rc-terminal). ---
   // hostConfirm: "" | ssh-on | ssh-off | keys-on | keys-off | vnc-on | vnc-off
   property string hostConfirm: ""
   property string confirmSshScope: "lan"
@@ -220,8 +221,8 @@ Panel {
     cancelHostConfirm()
   }
 
-  // Whether confirming `what` will bring up the admin-password dialog.
-  function hostNeedsAdmin(what) {
+  // Whether confirming `what` opens the command terminal (sudo steps).
+  function hostUsesTerminal(what) {
     if (what === "vnc-on") return (confirmVncScope !== "local" && host.ufwEnabled) || host.vncFirewall !== "none"
     if (what === "vnc-off") return host.vncFirewall !== "none"
     return what !== ""
@@ -282,9 +283,9 @@ Panel {
         }
 
         Text {
-          visible: root.hostNeedsAdmin(root.hostConfirm)
+          visible: root.hostUsesTerminal(root.hostConfirm)
           width: parent.width
-          text: "󰌾 This will ask for your admin password."
+          text: "󰆍 Opens a terminal that shows the exact commands and asks before running them (sudo will ask for your password)."
           wrapMode: Text.Wrap
           color: root.accent
           font.family: root.fontFamily
@@ -738,6 +739,22 @@ Panel {
             font.pixelSize: Style.font.caption
           }
 
+          // --- Install every missing client in one go ---
+          Button {
+            visible: !root.formOpen && store.missingPackages.length > 0
+            width: parent.width
+            text: store.installBusy ? "Installing in the terminal…" : "Install missing clients: " + store.missingPackages.join(", ")
+            iconText: "󰇚"
+            tooltipText: "Opens a terminal that shows the pacman command and asks before running it"
+            bordered: true
+            enabled: !store.installBusy
+            foreground: root.foreground
+            accent: root.accent
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            onClicked: store.installPackages(store.missingPackages)
+          }
+
           // --- Connection list ---
           Column {
             width: parent.width
@@ -879,7 +896,7 @@ Panel {
                         PanelActionButton {
                           iconText: rowItem.clientMissing ? "󰇚" : "󰌘"
                           tooltipText: rowItem.clientMissing
-                            ? "Install " + Model.clientPackage(rowItem.conn ? rowItem.conn.protocol : "") + " (asks for your password in a terminal)"
+                            ? "Install " + Model.clientPackage(rowItem.conn ? rowItem.conn.protocol : "") + " (opens a terminal that shows the command first)"
                             : "Connect"
                           foreground: rowItem.clientMissing ? root.urgent : root.accent
                           hoverColor: root.accent
@@ -1177,7 +1194,7 @@ Panel {
                     visible: !host.wayvncInstalled
                     anchors.centerIn: parent
                     iconText: "󰇚"
-                    tooltipText: "Install wayvnc (asks for your password in a terminal)"
+                    tooltipText: "Install wayvnc (opens a terminal that shows the command first)"
                     foreground: root.urgent
                     hoverColor: root.accent
                     fontFamily: root.fontFamily

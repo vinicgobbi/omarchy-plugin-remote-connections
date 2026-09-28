@@ -1,0 +1,164 @@
+#!/bin/bash
+
+# Plan the system changes for one or more actions, without running anything.
+# Prints one step per line, `description<TAB>command`; the command is exactly
+# what bin/rc-run-steps shows to the user and then runs (through `bash -c`),
+# so what you read in the terminal is what executes.
+#
+#   rc-steps <action> [args...] [+ <action> [args...]]...
+#
+# Actions:
+#   install <package>...          sudo pacman -S --needed ...
+#   ssh-enable lan|tailscale      start + enable sshd, open its port
+#   ssh-disable                   stop + disable sshd, close its port
+#   keys-on | keys-off            turn SSH password logins off / back on
+#   vnc-firewall lan|tailscale <port>
+#   vnc-firewall close
+#
+# Firewall rules added here carry the comment "omarchy-remote-connections
+# <ssh|vnc>". Only rules with that comment are ever removed: they're looked up
+# in ufw's world-readable rule files, and deleted by their exact spec.
+
+set -uo pipefail
+
+TAG="omarchy-remote-connections"
+DROPIN="/etc/ssh/sshd_config.d/90-omarchy-remote-connections.conf"
+# Overridable only so the parsing can be tested against sample rule files.
+UFW_DIR=${RC_UFW_DIR:-/etc/ufw}
+
+die() {
+  echo "$*" >&2
+  exit 1
+}
+
+step() {
+  printf '%s\t%s\n' "$1" "$2"
+}
+
+ufw_enabled() {
+  grep -qE '^ENABLED=yes' "$UFW_DIR/ufw.conf" 2>/dev/null
+}
+
+hex() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
+
+check_port() {
+  if ! [[ $1 =~ ^[0-9]+$ ]] || (( $1 < 1 || $1 > 65535 )); then
+    die "invalid port: $1"
+  fi
+}
+
+# First Port sshd would use: drop-ins are included at the top of
+# sshd_config, and the first value read wins.
+ssh_port() {
+  local port
+  port=$(cat /etc/ssh/sshd_config.d/*.conf /etc/ssh/sshd_config 2>/dev/null \
+    | awk 'tolower($1) == "port" && $2 ~ /^[0-9]+$/ { print $2; exit }')
+  echo "${port:-22}"
+}
+
+# Steps removing the rules this plugin added for <what> (ssh|vnc).
+close_steps() {
+  local what=$1 comment line port iface seen=" "
+  ufw_enabled || return 0
+  comment="comment=$(hex "$TAG $what")"
+  while read -r line; do
+    # "### tuple ### allow tcp <dport> <dst> <sport> <src> <in|in_iface> comment=..."
+    read -r _ _ _ _ _ port _ _ _ iface _ <<<"$line"
+    [[ $port =~ ^[0-9]+$ ]] || continue
+    case "$seen" in *" $port/$iface "*) continue ;; esac
+    seen+="$port/$iface "
+    if [[ $iface == in_tailscale0 ]]; then
+      step "Remove the firewall rule letting Tailscale reach port $port ($what)" \
+        "sudo ufw delete allow in on tailscale0 to any port $port proto tcp"
+    else
+      step "Remove the firewall rule opening port $port ($what) to the local network" \
+        "sudo ufw delete allow $port/tcp"
+    fi
+  done < <(grep -h '^### tuple ###' "$UFW_DIR/user.rules" "$UFW_DIR/user6.rules" 2>/dev/null | grep -F "$comment")
+}
+
+open_step() {
+  local what=$1 scope=$2 port=$3
+  ufw_enabled || return 0
+  if [[ $scope == tailscale ]]; then
+    step "Let devices on your tailnet reach port $port ($what) through the firewall" \
+      "sudo ufw allow in on tailscale0 to any port $port proto tcp comment '$TAG $what'"
+  else
+    step "Open port $port ($what) in the firewall for the local network" \
+      "sudo ufw allow $port/tcp comment '$TAG $what'"
+  fi
+}
+
+plan() {
+  local action=${1:-}
+  shift || true
+  case "$action" in
+    install)
+      (( $# > 0 )) || die "install: no packages given"
+      local pkg
+      for pkg in "$@"; do
+        [[ $pkg =~ ^[a-z0-9][a-z0-9+._-]*$ ]] || die "invalid package name: $pkg"
+      done
+      step "Install $* from the Arch repositories" "sudo pacman -S --needed $*"
+      ;;
+
+    ssh-enable)
+      local scope=${1:-}
+      [[ $scope == lan || $scope == tailscale ]] || die "ssh-enable: scope must be lan or tailscale"
+      step "Start the SSH server now and at every boot" "sudo systemctl enable --now sshd.service"
+      close_steps ssh
+      open_step ssh "$scope" "$(ssh_port)"
+      ;;
+
+    ssh-disable)
+      step "Stop the SSH server and don't start it at boot" "sudo systemctl disable --now sshd.service"
+      close_steps ssh
+      ;;
+
+    keys-on)
+      grep -qE '^[[:space:]]*[^#[:space:]]' "$HOME/.ssh/authorized_keys" 2>/dev/null \
+        || die "No keys in ~/.ssh/authorized_keys yet — add one first, or you'd lock yourself out."
+      step "Write an sshd drop-in that turns password logins off" \
+        "printf '%s\\n' '# Managed by the Omarchy Remote Connections plugin (Keys only).' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' | sudo tee $DROPIN >/dev/null"
+      step "Check the new sshd config, and remove the drop-in again if sshd rejects it" \
+        "sudo sshd -t || { sudo rm -f $DROPIN; exit 1; }"
+      if systemctl is-active --quiet sshd.service; then
+        step "Reload the running SSH server so the change applies" "sudo systemctl reload sshd.service"
+      fi
+      ;;
+
+    keys-off)
+      step "Remove the drop-in, allowing password logins again" "sudo rm -f $DROPIN"
+      if systemctl is-active --quiet sshd.service; then
+        step "Reload the running SSH server so the change applies" "sudo systemctl reload sshd.service"
+      fi
+      ;;
+
+    vnc-firewall)
+      local scope=${1:-}
+      if [[ $scope == close ]]; then
+        close_steps vnc
+      else
+        [[ $scope == lan || $scope == tailscale ]] || die "vnc-firewall: scope must be lan, tailscale or close"
+        check_port "${2:-}"
+        close_steps vnc
+        open_step vnc "$scope" "$2"
+      fi
+      ;;
+
+    *)
+      die "unknown action: $action"
+      ;;
+  esac
+}
+
+# Split the arguments on "+" and plan each action in turn.
+args=()
+for arg in "$@" +; do
+  if [[ $arg == + ]]; then
+    (( ${#args[@]} > 0 )) && { plan "${args[@]}" || exit 1; }
+    args=()
+  else
+    args+=("$arg")
+  fi
+done

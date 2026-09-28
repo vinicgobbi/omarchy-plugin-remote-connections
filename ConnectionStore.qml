@@ -120,10 +120,32 @@ Item {
     Quickshell.execDetached(["wl-copy", "--", String(text)])
   }
 
+  // Packages for the clients that saved connections need but aren't
+  // installed, e.g. ["freerdp", "tigervnc"].
+  readonly property var missingPackages: {
+    if (!clientsChecked) return []
+    var out = []
+    for (var i = 0; i < connections.length; i++) {
+      var pkg = Model.clientPackage(connections[i].protocol)
+      if (!hasClient(connections[i].protocol) && out.indexOf(pkg) < 0) out.push(pkg)
+    }
+    return out
+  }
+
+  readonly property bool installBusy: installProcess.running
+
   function installClient(protocol) {
-    var pkg = Model.clientPackage(protocol)
-    if (pkg === "") return
-    Quickshell.execDetached(["omarchy-launch-floating-terminal-with-presentation", "omarchy-pkg-add " + pkg])
+    installPackages([Model.clientPackage(protocol)])
+  }
+
+  // Opens a terminal showing the pacman command and asking before it runs
+  // (bin/rc-terminal); re-checks the clients once it's closed.
+  function installPackages(pkgs) {
+    var list = (pkgs || []).filter(function(p) { return p !== "" })
+    if (list.length === 0 || installProcess.running) return
+    lastError = ""
+    installProcess.command = [bundledPath("bin/rc-terminal"), "Install " + list.join(", "), "install"].concat(list)
+    installProcess.running = true
   }
 
   // --- Keyring (bin/rc-secret). One operation at a time; the password goes
@@ -200,6 +222,17 @@ Item {
     onExited: {
       root.availableClients = String(clientOut.text || "").split("\n").filter(function(s) { return s !== "" })
       root.clientsChecked = true
+    }
+  }
+
+  Process {
+    id: installProcess
+    running: false
+    command: []
+    stderr: StdioCollector { id: installErr; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode === 1) root.lastError = String(installErr.text || "").trim() || "The install failed."
+      root.refresh()
     }
   }
 
