@@ -1,0 +1,75 @@
+#!/bin/bash
+
+# List the concrete hosts from ~/.ssh/config (and files it Includes), one
+# per line, tab-separated:
+#
+#   alias<TAB>hostname<TAB>user<TAB>port
+#
+# Only `Host` entries without wildcards/negations are listed. hostname/user/
+# port are just for display — connecting uses `ssh <alias>` so ssh applies
+# the real config itself. Read-only: never writes to ~/.ssh.
+
+set -uo pipefail
+
+ssh_dir="$HOME/.ssh"
+main="$ssh_dir/config"
+[[ -r $main ]] || exit 0
+
+files=()
+declare -A seen=()
+
+add_file() {
+  local f=$1 depth=$2 line pattern expanded
+  local -a patterns
+  [[ -r $f && -z ${seen[$f]:-} ]] || return 0
+  (( depth <= 5 )) || return 0
+  seen[$f]=1
+  files+=("$f")
+  # Include takes one or more space-separated globs; relative ones are
+  # relative to ~/.ssh (ssh_config(5)).
+  while IFS= read -r line; do
+    read -ra patterns <<<"$line"
+    for pattern in "${patterns[@]}"; do
+      pattern=${pattern/#\~/$HOME}
+      [[ $pattern == /* ]] || pattern="$ssh_dir/$pattern"
+      while IFS= read -r expanded; do
+        add_file "$expanded" $((depth + 1))
+      done < <(compgen -G "$pattern" | sort)
+    done
+  done < <(sed -nE 's/^[[:space:]]*[Ii][Nn][Cc][Ll][Uu][Dd][Ee][[:space:]=]+(.*)$/\1/p' "$f")
+}
+
+add_file "$main" 0
+
+awk '
+  function flush(   i) {
+    for (i = 1; i <= n; i++)
+      if (!(aliases[i] in printed)) {
+        printed[aliases[i]] = 1
+        printf "%s\t%s\t%s\t%s\n", aliases[i], (hostname != "" ? hostname : aliases[i]), user, port
+      }
+    n = 0; hostname = ""; user = ""; port = ""
+  }
+  FNR == 1 { flush() }
+  {
+    sub(/#.*/, "")
+    gsub(/^[ \t]+|[ \t]+$/, "")
+    if ($0 == "") next
+    # "Key value" or "Key=value"
+    key = tolower($0); sub(/[ \t=].*/, "", key)
+    value = $0; sub(/^[^ \t=]+[ \t]*=?[ \t]*/, "", value)
+    if (key == "host" || key == "match") {
+      flush()
+      if (key == "match") next
+      count = split(value, parts, /[ \t]+/)
+      for (i = 1; i <= count; i++)
+        if (parts[i] !~ /[*?!]/ && parts[i] != "") aliases[++n] = parts[i]
+      next
+    }
+    if (n == 0) next
+    if (key == "hostname" && hostname == "") hostname = value
+    else if (key == "user" && user == "") user = value
+    else if (key == "port" && port == "") port = value
+  }
+  END { flush() }
+' "${files[@]}"

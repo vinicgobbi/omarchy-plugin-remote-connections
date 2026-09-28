@@ -20,6 +20,10 @@ Item {
   property bool writable: true
   property string lastError: ""
 
+  // Read-only hosts from ~/.ssh/config (bin/rc-ssh-hosts), see
+  // Model.parseSshHosts. Never written to connections.json.
+  property var sshHosts: []
+
   // Which client binaries are installed (see Model.allClientBinaries()).
   property var availableClients: []
   property bool clientsChecked: false
@@ -33,6 +37,15 @@ Item {
   function find(id) {
     for (var i = 0; i < connections.length; i++)
       if (connections[i].id === id) return connections[i]
+    return null
+  }
+
+  // Saved connection or ~/.ssh/config host.
+  function findAny(id) {
+    var c = find(id)
+    if (c) return c
+    for (var i = 0; i < sshHosts.length; i++)
+      if (sshHosts[i].id === id) return sshHosts[i]
     return null
   }
 
@@ -89,7 +102,7 @@ Item {
   }
 
   function connect(id) {
-    var c = find(id)
+    var c = findAny(id)
     if (!c) return false
     if (clientsChecked && !hasClient(c.protocol)) {
       lastError = Model.protocolLabel(c.protocol) + " needs the '" + Model.clientPackage(c.protocol) + "' package."
@@ -99,7 +112,7 @@ Item {
     // uwsm-app puts the client in its own systemd unit, so an omarchy-shell
     // restart doesn't take an open RDP/VNC/SSH session down with it.
     Quickshell.execDetached(["uwsm-app", "--", bundledPath("bin/rc-connect"), Model.connectPayload(c)])
-    setField(id, "lastUsed", Date.now())
+    if (!Model.isSshConfigEntry(c)) setField(id, "lastUsed", Date.now())
     return true
   }
 
@@ -141,13 +154,16 @@ Item {
     secretProcess.running = true
   }
 
-  function refreshClients() {
+  // Re-checks installed clients and re-reads ~/.ssh/config; cheap, so it
+  // runs every time the panel or the overlay opens.
+  function refresh() {
     clientCheck.running = true
+    sshHostsProcess.running = true
   }
 
   Component.onCompleted: {
     Quickshell.execDetached(["mkdir", "-p", root.configDir])
-    refreshClients()
+    refresh()
   }
 
   FileView {
@@ -180,6 +196,16 @@ Item {
     onExited: {
       root.availableClients = String(clientOut.text || "").split("\n").filter(function(s) { return s !== "" })
       root.clientsChecked = true
+    }
+  }
+
+  Process {
+    id: sshHostsProcess
+    running: false
+    command: [root.bundledPath("bin/rc-ssh-hosts")]
+    stdout: StdioCollector { id: sshHostsOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode === 0) root.sshHosts = Model.parseSshHosts(sshHostsOut.text)
     }
   }
 

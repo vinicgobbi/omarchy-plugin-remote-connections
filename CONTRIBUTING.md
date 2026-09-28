@@ -32,18 +32,26 @@ omarchy plugin validate .
 
 ## Structure
 
-- `manifest.json` — plugin metadata (id, kind, entry point)
+- `manifest.json` — plugin metadata: kinds `bar-widget` + `overlay`,
+  `keepLoaded` so the launcher opens with the list already loaded
 - `BarWidget.qml` — the bar icon and popup: filter, grouped connection
   list (favorite/edit/delete/connect), the inline add/edit form, and the
   install prompt when a protocol's client is missing
+- `QuickConnect.qml` — the keyboard launcher (overlay), modeled on the
+  built-in emoji picker; summoned with
+  `omarchy-shell shell toggle vinicgobbi.remote-connections`
 - `ConnectionStore.qml` — loads/saves
   `~/.config/omarchy/remote-connections/connections.json` (never
   overwriting a file that failed to parse), checks which clients are
-  installed, launches connections and queues keyring operations
+  installed, reads `~/.ssh/config` hosts, launches connections and queues
+  keyring operations. The bar widget and the launcher each have their own
+  instance; they stay in sync through the file (watched for changes)
 - `Model.js` — pure helpers (normalize, validate, sort, filter, the JSON
   handed to `rc-connect`); no QML types, so it can be tested with `node`
 - `bin/rc-connect` — opens one connection: ssh in a terminal, FreeRDP with
   its arguments on stdin, TigerVNC with the password in its environment
+- `bin/rc-ssh-hosts` — lists concrete `Host` aliases from `~/.ssh/config`
+  and its `Include`s (read-only)
 - `bin/rc-secret` — set/get/clear a password in the GNOME keyring via
   `secret-tool` (password on stdin, never argv)
 

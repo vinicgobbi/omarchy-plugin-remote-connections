@@ -27,7 +27,7 @@ Panel {
 
   onOpenedChanged: {
     if (opened) {
-      store.refreshClients()
+      store.refresh()
     } else {
       cancelForm()
       cancelDelete()
@@ -51,6 +51,12 @@ Panel {
         current = group
       }
       rows.push({ header: "", conn: c })
+    }
+    var sshHosts = Model.unsavedSshHosts(store.connections, store.sshHosts)
+      .filter(function(c) { return Model.matches(c, root.filterText) })
+    for (var j = 0; j < sshHosts.length; j++) {
+      if (j === 0) rows.push({ header: "~/.SSH/CONFIG", conn: null })
+      rows.push({ header: "", conn: sshHosts[j] })
     }
     return rows
   }
@@ -96,6 +102,14 @@ Panel {
     draftHasSecret = c ? d.hasSecret : false
     draftForgetPassword = false
     formError = ""
+  }
+
+  // Pre-fills a new SSH connection from a ~/.ssh/config host, so it can get
+  // a group/favorite. Host stays the alias: ssh still applies the config.
+  function saveSshHost(entry) {
+    openForm(null)
+    draftName = entry.name
+    draftHost = entry.host
   }
 
   function cancelForm() {
@@ -527,7 +541,7 @@ Panel {
           // --- Filter ---
           TextField {
             id: filterField
-            visible: store.connections.length > 0 && !root.formOpen
+            visible: (store.connections.length > 0 || store.sshHosts.length > 0) && !root.formOpen
             width: parent.width
             placeholderText: "Filter (/)"
             text: root.filterText
@@ -548,7 +562,7 @@ Panel {
           Column {
             width: parent.width
             spacing: Style.space(6)
-            visible: store.loaded && store.connections.length === 0 && !root.formOpen
+            visible: store.loaded && store.connections.length === 0 && store.sshHosts.length === 0 && !root.formOpen
 
             Text {
               width: parent.width
@@ -568,7 +582,7 @@ Panel {
           }
 
           Text {
-            visible: store.connections.length > 0 && root.listRows.length === 0
+            visible: root.filterText !== "" && root.listRows.length === 0
             width: parent.width
             text: "Nothing matches “" + root.filterText + "”."
             textFormat: Text.PlainText
@@ -590,6 +604,7 @@ Panel {
                 required property var modelData
                 readonly property var conn: modelData.conn
                 readonly property bool clientMissing: conn !== null && store.clientsChecked && !store.hasClient(conn.protocol)
+                readonly property bool fromSshConfig: Model.isSshConfigEntry(conn)
                 width: content.width
                 spacing: Style.space(6)
 
@@ -672,6 +687,18 @@ Panel {
                         spacing: Style.space(2)
 
                         PanelActionButton {
+                          visible: rowItem.fromSshConfig
+                          iconText: "󰆓"
+                          tooltipText: "Save as connection (to add a group or favorite)"
+                          foreground: root.foreground
+                          hoverColor: root.accent
+                          fontFamily: root.fontFamily
+                          enabled: store.writable
+                          onClicked: root.saveSshHost(rowItem.conn)
+                        }
+
+                        PanelActionButton {
+                          visible: !rowItem.fromSshConfig
                           iconText: rowItem.conn && rowItem.conn.favorite ? "󰓎" : "󰓒"
                           tooltipText: rowItem.conn && rowItem.conn.favorite ? "Unfavorite" : "Favorite"
                           foreground: rowItem.conn && rowItem.conn.favorite ? root.accent : root.dim
@@ -681,6 +708,7 @@ Panel {
                         }
 
                         PanelActionButton {
+                          visible: !rowItem.fromSshConfig
                           iconText: "󰏫"
                           tooltipText: "Edit"
                           foreground: root.foreground
@@ -691,6 +719,7 @@ Panel {
                         }
 
                         PanelActionButton {
+                          visible: !rowItem.fromSshConfig
                           iconText: "󰆴"
                           tooltipText: "Delete"
                           foreground: root.foreground

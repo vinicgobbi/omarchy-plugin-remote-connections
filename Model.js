@@ -145,6 +145,7 @@ function address(c) {
 
 function subtitle(c) {
   if (!c) return ""
+  if (isSshConfigEntry(c)) return "SSH · " + c.display + " · ~/.ssh/config"
   var parts = [protocolLabel(c.protocol), address(c)]
   if (c.group) parts.push(c.group)
   return parts.join(" · ")
@@ -155,7 +156,7 @@ function subtitle(c) {
 function matches(c, query) {
   var terms = clean(query).toLowerCase().split(/\s+/).filter(function(t) { return t !== "" })
   if (terms.length === 0) return true
-  var hay = [c.name, c.host, c.user, c.group, c.protocol].join(" ").toLowerCase()
+  var hay = [c.name, c.host, c.user, c.group, c.protocol, c.display || ""].join(" ").toLowerCase()
   for (var i = 0; i < terms.length; i++)
     if (hay.indexOf(terms[i]) < 0) return false
   return true
@@ -196,5 +197,59 @@ function connectPayload(c) {
     jumpHost: c.jumpHost,
     rdp: c.rdp,
     vnc: c.vnc
+  })
+}
+
+// --- ~/.ssh/config hosts (bin/rc-ssh-hosts output) ---
+// They're read-only entries: connecting runs `ssh <alias>` and lets ssh apply
+// the real config, so only the alias matters; hostname/user/port are shown
+// for reference.
+var SSH_CONFIG_PREFIX = "ssh-config:"
+
+function isSshConfigEntry(c) {
+  return !!c && c.source === "ssh-config"
+}
+
+function parseSshHosts(text) {
+  var out = []
+  var lines = String(text || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var f = lines[i].split("\t")
+    var alias = clean(f[0])
+    if (alias === "" || /^-/.test(alias)) continue
+    var c = normalize({ id: SSH_CONFIG_PREFIX + alias, name: alias, protocol: "ssh", host: alias })
+    c.source = "ssh-config"
+    var real = { user: clean(f[2]), host: clean(f[1]) || alias, port: toPort(f[3], "ssh"), protocol: "ssh" }
+    c.display = address(real)
+    out.push(c)
+  }
+  return out
+}
+
+// ssh-config hosts that aren't already saved as an SSH connection to the
+// same alias (the saved one wins; it can carry a group/favorite).
+function unsavedSshHosts(connections, sshHosts) {
+  var saved = {}
+  for (var i = 0; i < (connections || []).length; i++)
+    if (connections[i].protocol === "ssh") saved[connections[i].host] = true
+  return (sshHosts || []).filter(function(h) { return !saved[h.host] })
+}
+
+// Ordering for the quick-connect overlay. With no query: recently used
+// first, then favorites, then by name. With a query: names starting with it
+// first, then the same order.
+function quickList(connections, sshHosts, query) {
+  var all = (connections || []).concat(unsavedSshHosts(connections, sshHosts))
+  var q = clean(query).toLowerCase()
+  var list = all.filter(function(c) { return matches(c, query) })
+  return list.sort(function(a, b) {
+    if (q !== "") {
+      var pa = a.name.toLowerCase().indexOf(q) === 0, pb = b.name.toLowerCase().indexOf(q) === 0
+      if (pa !== pb) return pa ? -1 : 1
+    }
+    if (a.lastUsed !== b.lastUsed) return b.lastUsed - a.lastUsed
+    if (a.favorite !== b.favorite) return a.favorite ? -1 : 1
+    var na = a.name.toLowerCase(), nb = b.name.toLowerCase()
+    return na < nb ? -1 : (na > nb ? 1 : 0)
   })
 }
