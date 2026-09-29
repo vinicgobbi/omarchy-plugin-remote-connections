@@ -28,6 +28,7 @@ Column {
   property string dDomain: ""
   property bool dClipboard: true
   property bool dMultimon: false
+  property bool dGrabKeyboard: false
   property bool dViewOnly: false
   property string dPassword: ""
   property bool dForgetPassword: false
@@ -67,10 +68,11 @@ Column {
     dDomain = d.rdp.domain
     dClipboard = d.rdp.clipboard
     dMultimon = d.rdp.multimon
+    dGrabKeyboard = d.rdp.grabKeyboard
     dViewOnly = d.vnc.viewOnly
     dPassword = ""
     dForgetPassword = false
-    showAdvanced = dJump !== "" || dDomain !== "" || dMultimon || dViewOnly || !dClipboard
+    showAdvanced = dJump !== "" || dDomain !== "" || dMultimon || dViewOnly || !dClipboard || dGrabKeyboard
       || (dIdentity !== "" && store.sshKeys.indexOf(dIdentity) < 0)
     addingGroup = false
     error = ""
@@ -95,7 +97,7 @@ Column {
       hasSecret: existing ? existing.hasSecret && !dForgetPassword && dProtocol !== "ssh" : false,
       identityFile: dProtocol === "ssh" ? dIdentity : "",
       jumpHost: dProtocol === "ssh" ? dJump : "",
-      rdp: { domain: dDomain, clipboard: dClipboard, multimon: dMultimon },
+      rdp: { domain: dDomain, clipboard: dClipboard, multimon: dMultimon, grabKeyboard: dGrabKeyboard },
       vnc: { viewOnly: dViewOnly }
     }
   }
@@ -493,7 +495,7 @@ Column {
   // ===== Advanced =====
   Pill {
     width: parent.width
-    text: (form.showAdvanced ? "▾ " : "▸ ") + "Advanced · " + (form.dProtocol === "ssh" ? "jump host, key file" : form.dProtocol === "rdp" ? "domain, clipboard, monitors" : "view only")
+    text: (form.showAdvanced ? "▾ " : "▸ ") + "Advanced · " + (form.dProtocol === "ssh" ? "jump host, key file" : form.dProtocol === "rdp" ? "domain, keyboard, clipboard, monitors" : "view only")
     tint: panel.foreground
     bold: false
     fontFamily: panel.fontFamily
@@ -548,6 +550,19 @@ Column {
       accent: panel.accent
       fontFamily: panel.fontFamily
       onClicked: form.dClipboard = !form.dClipboard
+    }
+    Toggle {
+      visible: form.dProtocol === "rdp"
+      width: parent.width
+      label: "Send Omarchy shortcuts to the remote computer"
+      description: form.dGrabKeyboard
+        ? "Super, Alt+Tab… go to Windows. Right Shift + G frees the keyboard; Right Shift + D disconnects."
+        : "Off: Super+W, workspaces and other Omarchy shortcuts keep working while the window has focus."
+      checked: form.dGrabKeyboard
+      foreground: panel.foreground
+      accent: panel.accent
+      fontFamily: panel.fontFamily
+      onClicked: form.dGrabKeyboard = !form.dGrabKeyboard
     }
     Toggle {
       visible: form.dProtocol === "rdp"

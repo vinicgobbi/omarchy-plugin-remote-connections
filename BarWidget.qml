@@ -92,6 +92,7 @@ Panel {
 
   ConnectionStore {
     id: store
+    watchSessions: root.opened
   }
 
   HostService {

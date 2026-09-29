@@ -37,6 +37,10 @@ Item {
   property var sshKeys: []
   // Last result of testTarget(): { state, ms, banner, host, port }.
   property var testResult: null
+  // RDP/VNC windows opened by the plugin that are still running
+  // (bin/rc-sessions): [{ id, pid, protocol, started, name }].
+  property var sessions: []
+  property bool watchSessions: false
 
   function bundledPath(name) {
     return decodeURIComponent(String(Qt.resolvedUrl(name)).replace(/^file:\/\//, ""))
@@ -121,6 +125,7 @@ Item {
     // restart doesn't take an open RDP/VNC/SSH session down with it.
     Quickshell.execDetached(["uwsm-app", "--", bundledPath("bin/rc-connect"), Model.connectPayload(c)])
     if (!Model.isSshConfigEntry(c)) setField(id, "lastUsed", Date.now())
+    sessionsRecheck.restart()
     return true
   }
 
@@ -235,6 +240,19 @@ Item {
     probeProcess.running = true
   }
 
+  function refreshSessions() {
+    if (!sessionsProcess.running) sessionsProcess.running = true
+  }
+
+  function disconnectSession(id) {
+    Quickshell.execDetached([bundledPath("bin/rc-sessions"), "stop", String(id)])
+    sessionsRecheck.restart()
+  }
+
+  function focusSession(id) {
+    Quickshell.execDetached([bundledPath("bin/rc-sessions"), "focus", String(id)])
+  }
+
   function reachOf(id) {
     return reach[id] || { state: "unknown", ms: 0 }
   }
@@ -307,6 +325,36 @@ Item {
       if (exitCode === 1) root.lastError = String(terminalErr.text || "").trim() || "It failed in the terminal."
       root.refresh()
     }
+  }
+
+  Process {
+    id: sessionsProcess
+    running: false
+    command: [root.bundledPath("bin/rc-sessions"), "list"]
+    stdout: StdioCollector { id: sessionsOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) return
+      root.sessions = String(sessionsOut.text || "").split("\n").filter(function(l) { return l !== "" }).map(function(l) {
+        var f = l.split("\t")
+        return { id: f[0], pid: f[1], protocol: f[2], started: parseInt(f[3], 10) || 0, name: f[4] || f[0] }
+      })
+    }
+  }
+
+  // Poll while someone is looking (popup open), and shortly after a
+  // connect/disconnect so the list catches up.
+  Timer {
+    interval: 3000
+    repeat: true
+    running: root.watchSessions
+    triggeredOnStart: true
+    onTriggered: root.refreshSessions()
+  }
+
+  Timer {
+    id: sessionsRecheck
+    interval: 1500
+    onTriggered: root.refreshSessions()
   }
 
   Process {

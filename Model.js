@@ -64,7 +64,9 @@ function normalize(raw) {
     rdp: {
       domain: clean(rdp.domain),
       multimon: rdp.multimon === true,
-      clipboard: rdp.clipboard !== false
+      clipboard: rdp.clipboard !== false,
+      // Send Omarchy's shortcuts (Super…) to the remote instead of Hyprland.
+      grabKeyboard: rdp.grabKeyboard === true
     },
     vnc: {
       viewOnly: vnc.viewOnly === true

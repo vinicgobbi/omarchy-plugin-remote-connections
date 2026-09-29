@@ -1,0 +1,63 @@
+#!/bin/bash
+
+# The RDP/VNC client windows this plugin opened and that are still running.
+# bin/rc-connect records each one as
+# $XDG_RUNTIME_DIR/omarchy-remote-connections/sessions/<connection id>
+# holding `pid<TAB>protocol<TAB>started (ms)<TAB>name`.
+#
+#   rc-sessions list          one line per live session: id<TAB>pid<TAB>protocol<TAB>started<TAB>name
+#   rc-sessions stop <id>     disconnect (SIGTERM to the client)
+#   rc-sessions focus <id>    bring its window to the front (Hyprland)
+
+set -uo pipefail
+
+dir="${XDG_RUNTIME_DIR:-/run/user/$UID}/omarchy-remote-connections/sessions"
+
+valid_id() {
+  [[ $1 =~ ^[A-Za-z0-9._:-]+$ ]]
+}
+
+# pid of a live session (and still one of our clients), or nothing.
+live_pid() {
+  local file="$dir/$1" pid comm
+  [[ -f $file ]] || return 1
+  IFS=$'\t' read -r pid _ <"$file"
+  [[ $pid =~ ^[0-9]+$ ]] || return 1
+  comm=$(cat "/proc/$pid/comm" 2>/dev/null) || return 1
+  [[ $comm == *freerdp* || $comm == vncviewer* ]] || return 1
+  echo "$pid"
+}
+
+case "${1:-list}" in
+  list)
+    [[ -d $dir ]] || exit 0
+    for file in "$dir"/*; do
+      [[ -f $file ]] || continue
+      id=${file##*/}
+      if live_pid "$id" >/dev/null; then
+        printf '%s\t%s\n' "$id" "$(<"$file")"
+      else
+        rm -f "$file"
+      fi
+    done
+    ;;
+
+  stop)
+    id=${2:-}
+    valid_id "$id" || { echo "invalid session id" >&2; exit 2; }
+    pid=$(live_pid "$id") || exit 0
+    kill -TERM "$pid"
+    ;;
+
+  focus)
+    id=${2:-}
+    valid_id "$id" || { echo "invalid session id" >&2; exit 2; }
+    pid=$(live_pid "$id") || exit 1
+    hyprctl dispatch focuswindow "pid:$pid" >/dev/null
+    ;;
+
+  *)
+    echo "usage: rc-sessions list | stop <id> | focus <id>" >&2
+    exit 2
+    ;;
+esac

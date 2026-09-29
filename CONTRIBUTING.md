@@ -82,6 +82,9 @@ omarchy plugin validate .
   reads ufw's world-readable rule files, never the keyring
 - `bin/rc-vnc` — start/stop wayvnc as the transient user unit
   `omarchy-remote-wayvnc`, with its own control socket
+- `bin/rc-sessions` — lists the RDP/VNC windows `rc-connect` opened that are
+  still running (records in `$XDG_RUNTIME_DIR/omarchy-remote-connections/sessions/`),
+  and stops or focuses one; only ever signals a freerdp/vncviewer process
 - `bin/rc-probe` — "is it up": a TCP connect to each `id host port`, in
   parallel, with a short timeout (`--banner` also reads the greeting)
 - `bin/rc-ssh-keys` — lists `~/.ssh` private keys that have a `.pub`

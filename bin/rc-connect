@@ -15,6 +15,7 @@ set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-remote-connections"
+session_dir="${XDG_RUNTIME_DIR:-/run/user/$UID}/omarchy-remote-connections/sessions"
 
 notify() {
   notify-send -a "Remote Connections" -i network-server "$@" 2>/dev/null || true
@@ -68,13 +69,23 @@ first_available() {
 
 # Run a GUI client, keeping its output in a per-protocol log and reporting
 # a failed exit (bad password, unreachable host, rejected certificate...).
+# While it runs it's listed as an active session (bin/rc-sessions), so the
+# popup can show it with Show/Disconnect even if the window holds the
+# keyboard.
 run_client() {
-  mkdir -p "$log_dir"
-  local log="$log_dir/last-$protocol.log"
-  "$@" >"$log" 2>&1
-  local status=$?
-  # FreeRDP exits with 12/13 (logoff/disconnect by user) on a normal close.
-  if (( status != 0 && status != 12 && status != 13 )); then
+  mkdir -p "$log_dir" "$session_dir"
+  local log="$log_dir/last-$protocol.log" pid status
+  # Explicit stdin: a background job would otherwise get /dev/null, and
+  # FreeRDP reads its arguments from stdin.
+  "$@" 0<&0 >"$log" 2>&1 &
+  pid=$!
+  printf '%s\t%s\t%s\t%s\n' "$pid" "$protocol" "$(date +%s%3N)" "$name" >"$session_dir/$id"
+  wait "$pid"
+  status=$?
+  rm -f "$session_dir/$id"
+  # FreeRDP exits with 12/13 (logoff/disconnect by user) on a normal close;
+  # 143 is our own Disconnect (SIGTERM from bin/rc-sessions).
+  if (( status != 0 && status != 12 && status != 13 && status != 143 )); then
     notify -u critical "$name: connection ended with an error" "Exit code $status. Details: $log"
   fi
   return "$status"
@@ -111,6 +122,15 @@ case "$protocol" in
     [[ -n $password ]] && args+=("/p:$password")
     [[ $(field .rdp.clipboard) != "false" ]] && args+=(+clipboard)
     [[ $(field .rdp.multimon) == "true" ]] && args+=(/multimon)
+    # By default Omarchy's own shortcuts (SUPER+W, workspaces…) keep working
+    # while the window has focus; "grabKeyboard" sends them to the remote.
+    [[ $(field .rdp.grabKeyboard) == "true" ]] || args+=(-grab-keyboard)
+
+    if [[ $client == sdl-freerdp3 ]]; then
+      notify "$name" "Right Shift + D disconnects · Right Shift + Enter toggles fullscreen · Right Shift + G grabs/frees the keyboard. Or use Disconnect in the Remote Connections popup."
+    else
+      notify "$name" "Ctrl + Alt + Enter toggles fullscreen. Disconnect from the Remote Connections popup."
+    fi
 
     printf '%s\n' "${args[@]}" | run_client "$client" /args-from:stdin
     ;;
@@ -125,6 +145,7 @@ case "$protocol" in
       export VNC_PASSWORD=$password
       [[ -n $user ]] && export VNC_USERNAME=$user
     fi
+    notify "$name" "F8 opens the viewer menu (Exit viewer, fullscreen). Or use Disconnect in the Remote Connections popup."
     run_client "$client" "${args[@]}"
     ;;
 

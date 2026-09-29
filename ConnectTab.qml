@@ -308,6 +308,104 @@ Column {
     }
   }
 
+  // ===== Active sessions: always a way out of a window holding the keyboard =====
+  Column {
+    visible: store.sessions.length > 0
+    width: parent.width
+    spacing: Style.space(4)
+
+    PanelSectionHeader {
+      text: "ACTIVE"
+      foreground: panel.foreground
+      fontFamily: panel.fontFamily
+    }
+
+    Repeater {
+      model: store.sessions
+      delegate: Rectangle {
+        id: session
+        required property var modelData
+        width: tab.width
+        height: sessionRow.implicitHeight + Style.space(14)
+        radius: Style.cornerRadius
+        color: Util.alpha(panel.okColor, 0.08)
+        border.width: Style.normalBorderWidth
+        border.color: Util.alpha(panel.okColor, 0.35)
+
+        Row {
+          id: sessionRow
+          x: Style.space(8)
+          anchors.verticalCenter: parent.verticalCenter
+          width: parent.width - Style.space(16)
+          spacing: Style.space(10)
+
+          Rectangle {
+            id: sessionTile
+            anchors.verticalCenter: parent.verticalCenter
+            width: Style.space(30)
+            height: width
+            radius: Style.cornerRadius
+            color: Util.alpha(panel.protocolColors[session.modelData.protocol] || panel.accent, 0.14)
+            Text {
+              anchors.centerIn: parent
+              text: panel.protocolIcons[session.modelData.protocol] || ""
+              color: panel.protocolColors[session.modelData.protocol] || panel.accent
+              font.family: panel.fontFamily
+              font.pixelSize: Style.font.body
+            }
+          }
+
+          Column {
+            width: parent.width - sessionTile.width - sessionActions.width - Style.space(20)
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(2)
+            Text {
+              width: parent.width
+              text: session.modelData.name
+              textFormat: Text.PlainText
+              elide: Text.ElideRight
+              color: panel.foreground
+              font.family: panel.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              width: parent.width
+              text: "● connected " + Model.relativeTime(session.modelData.started, tab.now).replace(" ago", "").replace("just now", "now")
+                + (session.modelData.protocol === "rdp" ? " · Right Shift+D" : " · F8 menu")
+              elide: Text.ElideRight
+              color: panel.okColor
+              font.family: panel.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+          }
+
+          Row {
+            id: sessionActions
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(4)
+            Pill {
+              text: "Show"
+              tooltip: "Bring its window to the front"
+              tint: panel.foreground
+              fontFamily: panel.fontFamily
+              onClicked: {
+                store.focusSession(session.modelData.id)
+                panel.close()
+              }
+            }
+            Pill {
+              text: "Disconnect"
+              filled: true
+              tint: panel.urgent
+              fontFamily: panel.fontFamily
+              onClicked: store.disconnectSession(session.modelData.id)
+            }
+          }
+        }
+      }
+    }
+  }
+
   // ===== Search + protocol chips =====
   TextField {
     id: searchField
