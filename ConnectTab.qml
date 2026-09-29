@@ -42,6 +42,19 @@ Column {
     searchField.text = ""
   }
 
+  // Closes the ⋯ actions and the delete confirmation (tab switch, form).
+  function closeMenus() {
+    menuId = ""
+    pendingDeleteId = ""
+    selectedId = ""
+  }
+
+  function toggleMenu(id) {
+    pendingDeleteId = ""
+    selectedId = id
+    menuId = menuId === id ? "" : id
+  }
+
   // Esc peels one layer at a time; returns false when there's nothing left
   // to close so the popup itself closes.
   function handleEscape() {
@@ -86,7 +99,7 @@ Column {
     else if (t === "e" && !Model.isSshConfigEntry(c)) panel.openForm(c.id, null)
     else if (t === "f" && !Model.isSshConfigEntry(c)) store.toggleFavorite(c.id)
     else if (t === "c") copyAddress(c)
-    else if (t === ".") menuId = menuId === c.id ? "" : c.id
+    else if (t === ".") toggleMenu(c.id)
   }
 
   function clientMissing(c) {
@@ -380,6 +393,10 @@ Column {
           readonly property var conn: modelData
           readonly property bool fromConfig: Model.isSshConfigEntry(conn)
           readonly property bool isSelected: tab.selectedId === conn.id
+          readonly property bool menuOpen: tab.menuId === conn.id
+          // The actions stay on screen while this row's menu is open, so its
+          // ✕ can always close it.
+          readonly property bool showActions: isSelected || menuOpen
           readonly property bool missing: tab.clientMissing(conn)
           width: section.width
           spacing: Style.space(4)
@@ -388,8 +405,8 @@ Column {
             width: parent.width
             height: rowLine.implicitHeight + Style.space(14)
             radius: Style.cornerRadius
-            color: rowItem.isSelected ? Util.alpha(panel.accent, 0.12) : "transparent"
-            border.width: rowItem.isSelected ? Style.normalBorderWidth : 0
+            color: rowItem.showActions ? Util.alpha(panel.accent, 0.12) : "transparent"
+            border.width: rowItem.showActions ? Style.normalBorderWidth : 0
             border.color: Util.alpha(panel.accent, 0.35)
 
             HoverHandler {
@@ -401,9 +418,16 @@ Column {
               cursorShape: Qt.PointingHandCursor
               acceptedButtons: Qt.LeftButton | Qt.RightButton
               onClicked: function(mouse) {
-                tab.selectedId = rowItem.conn.id
-                if (mouse.button === Qt.RightButton) tab.menuId = tab.menuId === rowItem.conn.id ? "" : rowItem.conn.id
-                else tab.primaryAction(rowItem.conn)
+                if (mouse.button === Qt.RightButton) {
+                  tab.toggleMenu(rowItem.conn.id)
+                } else if (tab.menuId !== "" && !rowItem.menuOpen) {
+                  // A menu is open elsewhere: this click just closes it.
+                  tab.menuId = ""
+                  tab.selectedId = rowItem.conn.id
+                } else {
+                  tab.selectedId = rowItem.conn.id
+                  tab.primaryAction(rowItem.conn)
+                }
               }
             }
 
@@ -457,12 +481,12 @@ Column {
               Item {
                 id: rightSide
                 anchors.verticalCenter: parent.verticalCenter
-                width: rowItem.isSelected ? actions.implicitWidth : status.implicitWidth
+                width: rowItem.showActions ? actions.implicitWidth : status.implicitWidth
                 height: Math.max(actions.implicitHeight, status.implicitHeight)
 
                 Column {
                   id: status
-                  visible: !rowItem.isSelected
+                  visible: !rowItem.showActions
                   anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
                   spacing: Style.space(2)
@@ -484,17 +508,17 @@ Column {
 
                 Row {
                   id: actions
-                  visible: rowItem.isSelected
+                  visible: rowItem.showActions
                   anchors.right: parent.right
                   anchors.verticalCenter: parent.verticalCenter
                   spacing: Style.space(4)
 
                   Pill {
-                    text: "⋯"
-                    tooltip: "More actions (right-click, or .)"
-                    tint: panel.foreground
+                    text: rowItem.menuOpen ? "✕" : "⋯"
+                    tooltip: rowItem.menuOpen ? "Close actions (Esc)" : "More actions (right-click, or .)"
+                    tint: rowItem.menuOpen ? panel.accent : panel.foreground
                     fontFamily: panel.fontFamily
-                    onClicked: tab.menuId = tab.menuId === rowItem.conn.id ? "" : rowItem.conn.id
+                    onClicked: tab.toggleMenu(rowItem.conn.id)
                   }
                   Pill {
                     filled: true
@@ -511,7 +535,7 @@ Column {
 
           // ⋯ actions
           Flow {
-            visible: tab.menuId === rowItem.conn.id
+            visible: rowItem.menuOpen
             width: parent.width
             leftPadding: Style.space(48)
             spacing: Style.space(6)

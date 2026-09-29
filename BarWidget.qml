@@ -41,6 +41,7 @@ Panel {
   readonly property bool formOpen: formId !== ""
 
   function openForm(id, seed) {
+    connectTab.closeMenus()
     formSeed = seed || null
     formId = id || "new"
   }
@@ -57,6 +58,7 @@ Panel {
 
   function showTab(name) {
     closeForm()
+    connectTab.closeMenus()
     tab = name
   }
 
