@@ -42,9 +42,12 @@ omarchy plugin validate .
 
 - `manifest.json` — plugin metadata: kinds `bar-widget` + `overlay`,
   `keepLoaded` so the launcher opens with the list already loaded
-- `BarWidget.qml` — the bar icon and popup: filter, grouped connection
-  list (favorite/edit/delete/connect), the inline add/edit form, and the
-  install prompt when a protocol's client is missing
+- `BarWidget.qml` is only the frame: bar icon, header, the two tabs and
+  keyboard routing; the content lives in `ConnectTab.qml` (search, sections,
+  row actions, first-run cards), `MachineTab.qml` (SSH server and screen
+  sharing cards) and `ConnectionForm.qml` (add/edit). `Pill.qml` is the
+  small button they share. Status colors (green/yellow/blue/magenta) come
+  from the current theme's `colors.toml`, since the shell palette has none
 - `QuickConnect.qml` — the keyboard launcher (overlay), modeled on the
   built-in emoji picker; summoned with
   `omarchy-shell shell toggle vinicgobbi.remote-connections`
@@ -79,6 +82,9 @@ omarchy plugin validate .
   reads ufw's world-readable rule files, never the keyring
 - `bin/rc-vnc` — start/stop wayvnc as the transient user unit
   `omarchy-remote-wayvnc`, with its own control socket
+- `bin/rc-probe` — "is it up": a TCP connect to each `id host port`, in
+  parallel, with a short timeout (`--banner` also reads the greeting)
+- `bin/rc-ssh-keys` — lists `~/.ssh` private keys that have a `.pub`
 - `bin/rc-secret` — set/get/clear a password in the GNOME keyring via
   `secret-tool` (password on stdin, never argv)
 

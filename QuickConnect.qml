@@ -48,6 +48,7 @@ Item {
     root.filterText = ""
     root.selectedIndex = 0
     store.refresh()
+    store.probeAll()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -262,8 +263,10 @@ Item {
                 Text {
                   id: badge
                   anchors.verticalCenter: parent.verticalCenter
-                  text: row.modelData.favorite ? "󰓎" : ""
-                  color: root.dim
+                  readonly property var reach: store.reachOf(row.modelData.id)
+                  text: (row.modelData.favorite ? "󰓎  " : "")
+                    + (reach.state === "up" ? "● up" : reach.state === "down" ? "● down" : reach.state === "checking" ? "● …" : "")
+                  color: reach.state === "down" ? root.urgent : root.dim
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.body
                 }
