@@ -20,7 +20,7 @@ Item {
   property string filterText: ""
   property int selectedIndex: 0
 
-  readonly property var protocolIcons: ({ ssh: "󰣀", rdp: "󰍹", vnc: "󰢹" })
+  readonly property var protocolIcons: ({ ssh: "󰆍", rdp: "󰍹", vnc: "󰢹" })
   readonly property var results: Model.quickList(store.connections, store.sshHosts, filterText)
 
   // Same [menu] surface tokens as the emoji picker/Omarchy menu, so themes

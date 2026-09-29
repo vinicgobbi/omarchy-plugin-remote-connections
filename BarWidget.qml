@@ -32,7 +32,7 @@ Panel {
     rdp: themeColors.blue || accent,
     vnc: themeColors.magenta || accent
   })
-  readonly property var protocolIcons: ({ ssh: "󰣀", rdp: "󰍹", vnc: "󰢹" })
+  readonly property var protocolIcons: ({ ssh: "󰆍", rdp: "󰍹", vnc: "󰢹" })
 
   // --- Navigation ---
   property string tab: "connect"          // connect | machine
