@@ -13,6 +13,10 @@
 
 set -uo pipefail
 
+# Logs, session records and run files hold hostnames and users: keep them
+# private to this user.
+umask 077
+
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-remote-connections"
 session_dir="${XDG_RUNTIME_DIR:-/run/user/$UID}/omarchy-remote-connections/sessions"
@@ -43,9 +47,22 @@ user=$(field .user)
 has_secret=$(field .hasSecret)
 
 [[ -n $host ]] || fail "Connection has no host"
-# Model.validate already rejects these; checked again here since this script
-# builds command lines from them.
-[[ $host != -* && $user != -* ]] || fail "Host/user can't start with '-'"
+
+# connections.json can be edited by hand or come from someone else, so
+# everything that ends up on a client's command line is checked again here
+# (Model.validate does the same for the form):
+# - a host starting with "-" would be read as an option; TigerVNC also
+#   treats any "Name=value" argument as a setting (e.g. Via=… would tunnel
+#   through another machine), hence no "=" either;
+# - FreeRDP reads one argument per line, so no field may hold a line break;
+# - ssh's user/jump host get the same strict shape as hostnames.
+HOST_RE='^[A-Za-z0-9_][A-Za-z0-9._:-]*$'
+[[ $host =~ $HOST_RE ]] || fail "Invalid host \"$host\" (letters, digits, . _ : - only)."
+[[ -z $port || ( $port =~ ^[0-9]{1,5}$ && $port -ge 1 && $port -le 65535 ) ]] || fail "Invalid port: $port"
+for value in "$name" "$user" "$(field .rdp.domain)" "$(field .identityFile)"; do
+  [[ $value != *[[:cntrl:]]* ]] || fail "A field of \"${name//[[:cntrl:]]/}\" contains control characters."
+done
+[[ $user != -* ]] || fail "User can't start with '-'"
 
 password=""
 if [[ $has_secret == "true" && $protocol != "ssh" ]]; then
@@ -75,7 +92,7 @@ first_available() {
 # popup can show it with Show/Disconnect even if the window holds the
 # keyboard.
 run_client() {
-  mkdir -p "$log_dir" "$session_dir"
+  mkdir -p "$log_dir" "$session_dir" && chmod 700 "$log_dir"
   local log="$log_dir/last-$protocol.log" pid status
   # Explicit stdin: a background job would otherwise get /dev/null, and
   # FreeRDP reads its arguments from stdin.
@@ -99,6 +116,10 @@ case "$protocol" in
     [[ -n $port && $port != 22 ]] && args+=(-p "$port")
     identity=$(field .identityFile)
     jump=$(field .jumpHost)
+    [[ -z $user || $user =~ ^[A-Za-z0-9._][A-Za-z0-9._@-]*$ ]] || fail "Invalid SSH user: $user"
+    # -J takes user@host[:port], comma-separated for several hops.
+    [[ -z $jump || $jump =~ ^([A-Za-z0-9._-]+@)?[A-Za-z0-9_][A-Za-z0-9._-]*(:[0-9]+)?(,([A-Za-z0-9._-]+@)?[A-Za-z0-9_][A-Za-z0-9._-]*(:[0-9]+)?)*$ ]] \
+      || fail "Invalid jump host: $jump"
     [[ -n $identity ]] && args+=(-i "${identity/#\~/$HOME}")
     [[ -n $jump ]] && args+=(-J "$jump")
     args+=(-- "${user:+$user@}$host")

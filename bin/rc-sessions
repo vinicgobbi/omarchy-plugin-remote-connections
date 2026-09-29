@@ -11,6 +11,10 @@
 
 set -uo pipefail
 
+# Logs, session records and run files hold hostnames and users: keep them
+# private to this user.
+umask 077
+
 dir="${XDG_RUNTIME_DIR:-/run/user/$UID}/omarchy-remote-connections/sessions"
 
 valid_id() {

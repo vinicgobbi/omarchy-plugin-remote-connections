@@ -36,6 +36,13 @@ trap '$result_written || write_result canceled' EXIT
 
 have_gum() { command -v gum >/dev/null 2>&1; }
 
+# Everything shown here must be exactly what runs, so no text may carry
+# terminal control sequences (an escape code could redraw the screen and
+# hide the real command). Displayed text is stripped of them; a command that
+# contains any is refused outright (see below).
+plain() { printf '%s' "$1" | tr -d '\000-\037\177'; }
+title=$(plain "$title")
+
 style() {
   if have_gum; then gum style "$@"; else printf '%s\n' "${@: -1}"; fi
 }
@@ -61,7 +68,9 @@ steps=()
 afters=()
 undos=()
 uses_sudo=false
+unsafe=false
 for line in "${plan[@]}"; do
+  [[ ${line#*$'\t'} == *[[:cntrl:]]* ]] && unsafe=true
   case "$line" in
     "#after"$'\t'*) afters+=("${line#*$'\t'}") ;;
     "#undo"$'\t'*) undos+=("${line#*$'\t'}") ;;
@@ -71,8 +80,11 @@ for line in "${plan[@]}"; do
       ;;
   esac
 done
+if $unsafe; then
+  echo "Refusing to continue: a step contains terminal control characters." >"$run_dir/run-$token.err"
+fi
 if [[ -s $run_dir/run-$token.err ]]; then
-  message=$(<"$run_dir/run-$token.err")
+  message=$(plain "$(<"$run_dir/run-$token.err")")
   style --foreground 1 --bold "Can't continue: $message"
   write_result "failed	$message"
   close_prompt
@@ -90,12 +102,12 @@ style --bold --foreground 212 "Remote Connections · $title"
 echo
 if (( ${#afters[@]} > 0 )); then
   style --bold "After this"
-  for a in "${afters[@]}"; do echo "  • $a"; done
+  for a in "${afters[@]}"; do echo "  • $(plain "$a")"; done
   echo
 fi
 if (( ${#undos[@]} > 0 )); then
   style --bold "To undo"
-  for u in "${undos[@]}"; do echo "  • $u"; done
+  for u in "${undos[@]}"; do echo "  • $(plain "$u")"; done
   echo
 fi
 style --bold "Commands (run exactly as shown)"
@@ -103,7 +115,7 @@ echo
 i=0
 for s in "${steps[@]}"; do
   i=$((i + 1))
-  style --bold "$i. ${s%%$'\t'*}"
+  style --bold "$i. $(plain "${s%%$'\t'*}")"
   style --foreground 6 --padding "0 3" "\$ ${s#*$'\t'}"
 done
 echo
@@ -138,7 +150,7 @@ skipped=0
 i=0
 for s in "${steps[@]}"; do
   i=$((i + 1))
-  desc=${s%%$'\t'*}
+  desc=$(plain "${s%%$'\t'*}")
   cmd=${s#*$'\t'}
   echo
   style --bold "$i/${#steps[@]} · $desc"

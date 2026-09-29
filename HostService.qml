@@ -21,8 +21,9 @@ Item {
   property bool sshInstalled: false
   property bool sshActive: false
   property bool sshEnabled: false
-  property bool sshKeysOnly: false
-  property string sshFirewall: "none"      // none | lan | tailscale
+  property bool sshKeysOnly: false         // effective: sshd refuses passwords
+  property bool sshKeysManaged: false      // the plugin's drop-in is present
+  property string sshFirewall: "none"      // none | lan | tailscale | any (open to every source)
   property int authorizedKeys: 0
   property int sshPort: 22
   property bool ufwEnabled: false
@@ -120,7 +121,7 @@ Item {
   // applied right away (through the terminal) while it's on.
   function chooseSshScope(scope) {
     if (scope !== "lan" && scope !== "tailscale") return
-    if (sshActive && scope !== sshFirewall && ufwEnabled) {
+    if (sshActive && (scope !== sshFirewall || sshFirewall === "any") && ufwEnabled) {
       enableSsh(scope)
     } else {
       sshScope = scope
@@ -248,7 +249,8 @@ Item {
     sshInstalled = map.ssh_installed === "yes"
     sshActive = map.ssh_active === "active"
     sshEnabled = map.ssh_enabled === "enabled"
-    sshKeysOnly = map.ssh_keys_only === "yes"
+    sshKeysOnly = map.ssh_password_auth === "no"
+    sshKeysManaged = map.ssh_keys_managed === "yes"
     sshFirewall = map.ssh_firewall || "none"
     authorizedKeys = parseInt(map.authorized_keys, 10) || 0
     sshPort = parseInt(map.ssh_port, 10) || 22

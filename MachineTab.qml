@@ -42,9 +42,13 @@ Column {
     return host.lanIps.concat(host.tailscaleIp !== "" ? [host.tailscaleIp] : [])
   }
 
+  // "any" is an old rule open to every source; it counts as the LAN choice
+  // (and is flagged below until SSH is turned off and on again).
   readonly property string sshScopeNow: host.sshActive
-    ? (host.sshFirewall === "none" ? "lan" : host.sshFirewall)
+    ? (host.sshFirewall === "none" || host.sshFirewall === "any" ? "lan" : host.sshFirewall)
     : host.sshScope
+  readonly property bool openToInternet: host.ufwEnabled
+    && ((host.sshActive && host.sshFirewall === "any") || (host.vncActive && host.vncFirewall === "any"))
 
   readonly property string exposure: {
     var parts = []
@@ -52,12 +56,13 @@ Column {
     if (host.vncActive) parts.push("screen sharing")
     if (parts.length === 0) return "Nobody can reach this computer: SSH and screen sharing are off."
     var where
-    if (!host.ufwEnabled) where = "every network you're on (the firewall is off)"
+    if (!host.ufwEnabled) where = "every network you're on, the internet included if you have a public IPv6 (the firewall is off)"
+    else if (openToInternet) where = "every network, the internet included"
     else {
       var scopes = []
       if (host.sshActive) scopes.push(sshScopeNow)
       if (host.vncActive) scopes.push(host.vncScope)
-      where = scopes.indexOf("lan") >= 0 ? "your local network"
+      where = scopes.indexOf("lan") >= 0 ? "private networks (your LAN)"
         : (scopes.indexOf("tailscale") >= 0 ? "your Tailscale devices" : "this computer only")
     }
     return "Reachable from " + where + " over " + parts.join(" and ") + "."
@@ -376,16 +381,21 @@ Column {
       Check {
         visible: host.sshInstalled
         width: parent.width
-        ok: host.ufwEnabled
-        text: host.ufwEnabled
-          ? (host.sshActive ? "Firewall on: port " + host.sshPort + " open to " + (tab.sshScopeNow === "tailscale" ? "Tailscale only" : "the local network") : "Firewall on")
-          : "Firewall (ufw) is off: whatever you turn on here is reachable from every network"
+        ok: host.ufwEnabled && !(host.sshActive && host.sshFirewall === "any")
+        text: !host.ufwEnabled
+          ? "Firewall (ufw) is off: whatever you turn on here is reachable from every network, the internet included over IPv6"
+          : host.sshActive && host.sshFirewall === "any"
+          ? "Port " + host.sshPort + " is open to every network, the internet included (a rule from an older version). Turn the SSH server off and on again to limit it to private networks."
+          : host.sshActive ? "Firewall on: port " + host.sshPort + " open to " + (tab.sshScopeNow === "tailscale" ? "Tailscale only" : "private networks only (not the internet)")
+          : "Firewall on"
       }
       Check {
         visible: host.sshInstalled
         width: parent.width
         ok: host.sshKeysOnly
-        text: host.sshKeysOnly ? "Only SSH keys can log in (" + host.authorizedKeys + " allowed)"
+        text: host.sshKeysOnly
+            ? "Only SSH keys can log in (" + host.authorizedKeys + " allowed)" + (host.sshKeysManaged ? "" : " · set outside the plugin")
+          : host.sshKeysManaged ? "Require keys is on, but another sshd setting turns passwords back on. Check /etc/ssh/sshd_config.d/."
           : host.authorizedKeys === 0 ? "Password logins are allowed. Add a key, then require keys."
           : host.authorizedKeys + " key(s) allowed, but passwords still work too."
       }
@@ -400,12 +410,15 @@ Column {
           onClicked: tab.addingKey = !tab.addingKey
         }
         Pill {
-          text: host.sshKeysOnly ? "Allow passwords again" : "Require keys"
-          tooltip: host.authorizedKeys === 0 && !host.sshKeysOnly ? "Add a key first, or you'd lock yourself out" : "Opens the command terminal"
-          enabled: host.busy === "" && (host.sshKeysOnly || host.authorizedKeys > 0)
+          // Only offered when the plugin manages it; a keys-only setup made
+          // by hand is left alone.
+          visible: host.sshKeysManaged || !host.sshKeysOnly
+          text: host.sshKeysManaged ? "Allow passwords again" : "Require keys"
+          tooltip: host.authorizedKeys === 0 && !host.sshKeysManaged ? "Add a key first, or you'd lock yourself out" : "Opens the command terminal"
+          enabled: host.busy === "" && (host.sshKeysManaged || host.authorizedKeys > 0)
           tint: panel.foreground
           fontFamily: panel.fontFamily
-          onClicked: host.setKeysOnly(!host.sshKeysOnly)
+          onClicked: host.setKeysOnly(!host.sshKeysManaged)
         }
       }
 
@@ -566,6 +579,16 @@ Column {
         visible: text !== "" && host.wayvncInstalled
         wrapMode: Text.Wrap
         color: panel.dim
+        font.family: panel.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+
+      Text {
+        visible: host.vncActive && host.vncFirewall === "any" && host.ufwEnabled
+        width: parent.width
+        text: "! Port " + host.vncPort + " is open to every network, the internet included (a rule from an older version). Turn sharing off and on again to limit it to private networks."
+        wrapMode: Text.Wrap
+        color: panel.warnColor
         font.family: panel.fontFamily
         font.pixelSize: Style.font.caption
       }

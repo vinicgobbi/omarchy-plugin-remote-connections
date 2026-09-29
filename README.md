@@ -67,7 +67,10 @@ computer** on and off:
 
 - A one-line summary of who can reach this computer right now.
 - **SSH server**: starts/stops `sshd` and opens its port in the firewall
-  (ufw) either for the **local network** or for **Tailscale only**. Shows the
+  (ufw) either for the **local network** — private address ranges only
+  (10/8, 172.16/12, 192.168/16, IPv6 link-local and ULA), never the
+  internet, even if your connection has a public IPv6 address — or for
+  **Tailscale only**. Shows the
   `ssh user@address` to use from the other machine, with a copy button, and a
   security checklist (firewall, password logins). **Add a key** shows the
   `ssh-copy-id` to run from the other computer, or lets you paste its public
@@ -162,12 +165,56 @@ never does them silently. Here's what to expect:
 | Screen-sharing password | GNOME keyring (*Screen sharing (this machine)*); written to a temporary 0600 file in `$XDG_RUNTIME_DIR` only while wayvnc starts, then deleted |
 | Screen-sharing keys (RSA/TLS) | `~/.local/state/omarchy-remote-connections/wayvnc/` |
 | Sharing preferences (scope, port) | `~/.config/omarchy/remote-connections/host.json` |
-| SSH *Keys only* setting | `/etc/ssh/sshd_config.d/90-omarchy-remote-connections.conf` (delete it to undo by hand) |
+| SSH *Require keys* setting | `/etc/ssh/sshd_config.d/05-omarchy-remote-connections.conf` (read before other drop-ins so nothing turns passwords back on; delete it to undo by hand) |
 | Firewall rules | ufw rules commented `omarchy-remote-connections ssh`/`vnc`; the plugin only ever removes rules with that comment |
 | Last client output (for troubleshooting) | `~/.local/state/omarchy-remote-connections/last-<protocol>.log` |
 
 If `connections.json` has a syntax error, the plugin shows it and refuses to
 save, so your file is never overwritten.
+
+## Security
+
+What the plugin does to stay safe, and what it can't do for you:
+
+- **No hidden root.** Nothing of the plugin runs as root; the only
+  privileged commands are the `sudo …` lines the command terminal shows you,
+  run exactly as shown. Text shown there is stripped of terminal control
+  codes, and a step whose command contains any is refused, so the screen
+  can't be made to show something other than what runs.
+- **Firewall scopes mean what they say.** *Local network* opens the port to
+  private ranges only; *Tailscale only* to the `tailscale0` interface. The
+  plugin only ever removes firewall rules carrying its own comment. If an
+  older version left a rule open to every source, the *This machine* tab
+  flags it. With ufw **off**, everything you turn on is reachable from every
+  network — the tab says so.
+- **Require keys is verified, not assumed.** The tab shows what sshd will
+  really use (the first `PasswordAuthentication` it reads), and the terminal
+  prints `sshd -T`'s answer after the change.
+- **Connections are validated before any client starts**, also when
+  `connections.json` was edited by hand or came from someone else: hosts
+  can't start with `-` or contain `=`/spaces (TigerVNC reads `Name=value`
+  arguments as settings), and no field may contain line breaks (FreeRDP reads
+  its arguments one per line).
+- **Passwords** stay in the GNOME keyring and never reach a command line.
+  TigerVNC gets the VNC password through its environment, which only your
+  user (and root) can read while it runs.
+- **Screen sharing** always requires a password and encrypts the session; the
+  password is on disk only for the instant wayvnc starts (tmpfs, mode 600).
+- **Your data** (`~/.config/omarchy/remote-connections/`, logs and session
+  records) is created readable only by you.
+
+Known limits:
+
+- **First contact is trust-on-first-use.** RDP accepts the server
+  certificate the first time (`/cert:tofu`) and refuses it if it changes
+  later; SSH asks you to confirm the host key. A man-in-the-middle on that very
+  first connection can't be detected by either.
+- **Old VNC servers may not encrypt.** TigerVNC uses encryption when the
+  server offers it; legacy servers (plain VNC password) send the screen and a
+  weakly protected password in the clear. Prefer SSH tunnels or Tailscale
+  for those.
+- **Reachability checks** open a TCP connection to each saved server (and
+  resolve its name) when the popup opens and every 30 s while it stays open.
 
 ## Roadmap
 

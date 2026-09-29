@@ -33,8 +33,20 @@ function newId() {
   })
 }
 
+// Same rule as bin/rc-connect: no leading "-" (read as an option), no "="
+// (TigerVNC reads "Name=value" arguments as settings), no spaces/quotes.
+var HOST_RE = /^[A-Za-z0-9_][A-Za-z0-9._:-]*$/
+
+// Strips every control character (line breaks would add arguments to
+// FreeRDP's one-per-line input; escape codes could garble a terminal).
 function clean(value) {
-  return String(value === undefined || value === null ? "" : value).replace(/[\r\n\t]/g, " ").trim()
+  return String(value === undefined || value === null ? "" : value).replace(/[\u0000-\u001f\u007f]/g, " ").trim()
+}
+
+// For text shown by Text items that may interpret rich text (section
+// headers): no markup.
+function plainLabel(value) {
+  return clean(value).replace(/[<>&]/g, "")
 }
 
 function toPort(value, protocol) {
@@ -105,9 +117,14 @@ function validate(draft) {
   var d = draft || {}
   var host = clean(d.host)
   if (host === "") return "Host is required."
-  if (/\s/.test(host)) return "Host can't contain spaces."
-  if (/^-/.test(host) || /^-/.test(clean(d.user)) || /^-/.test(clean(d.jumpHost)))
-    return "Host, user and jump host can't start with '-'."
+  if (!HOST_RE.test(host)) return "Host can only use letters, digits and . _ : - (no spaces, no \"=\", not starting with -)."
+  if (/^-/.test(clean(d.user)) || /^-/.test(clean(d.jumpHost)))
+    return "User and jump host can't start with '-'."
+  if (d.protocol === "ssh" && clean(d.user) !== "" && !/^[A-Za-z0-9._][A-Za-z0-9._@-]*$/.test(clean(d.user)))
+    return "SSH user can only use letters, digits and . _ @ -."
+  var jump = clean(d.jumpHost)
+  if (jump !== "" && !/^([A-Za-z0-9._-]+@)?[A-Za-z0-9_][A-Za-z0-9._-]*(:[0-9]+)?(,([A-Za-z0-9._-]+@)?[A-Za-z0-9_][A-Za-z0-9._-]*(:[0-9]+)?)*$/.test(jump))
+    return "Jump host should look like user@host or user@host:port."
   var portText = clean(d.port)
   if (portText !== "") {
     var n = parseInt(portText, 10)
@@ -221,7 +238,7 @@ function parseSshHosts(text) {
   for (var i = 0; i < lines.length; i++) {
     var f = lines[i].split("\t")
     var alias = clean(f[0])
-    if (alias === "" || /^-/.test(alias)) continue
+    if (!HOST_RE.test(alias)) continue
     var c = normalize({ id: SSH_CONFIG_PREFIX + alias, name: alias, protocol: "ssh", host: alias })
     c.source = "ssh-config"
     var real = { user: clean(f[2]), host: clean(f[1]) || alias, port: toPort(f[3], "ssh"), protocol: "ssh" }
@@ -303,7 +320,7 @@ function connectSections(connections, sshHosts, query, protocol) {
   if (favorites.length > 0) sections.push({ title: "FAVORITES", rows: favorites })
   var groupNames = groups(rest.filter(function(c) { return !c.favorite }))
   groupNames.forEach(function(g) {
-    sections.push({ title: g.toUpperCase(), rows: rest.filter(function(c) { return !c.favorite && c.group === g }) })
+    sections.push({ title: plainLabel(g).toUpperCase(), rows: rest.filter(function(c) { return !c.favorite && c.group === g }) })
   })
   var ungrouped = rest.filter(function(c) { return !c.favorite && c.group === "" })
   if (ungrouped.length > 0) sections.push({ title: groupNames.length > 0 || favorites.length > 0 ? "OTHER" : "CONNECTIONS", rows: ungrouped })

@@ -279,7 +279,8 @@ Item {
   }
 
   Component.onCompleted: {
-    Quickshell.execDetached(["mkdir", "-p", root.configDir])
+    // Private: it lists your hosts and users (never passwords).
+    Quickshell.execDetached(["sh", "-c", 'mkdir -p "$1" && chmod 700 "$1"', "sh", root.configDir])
     refresh()
   }
 

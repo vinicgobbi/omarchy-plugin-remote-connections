@@ -16,6 +16,10 @@
 
 set -uo pipefail
 
+# Logs, session records and run files hold hostnames and users: keep them
+# private to this user.
+umask 077
+
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 UNIT="omarchy-remote-wayvnc"
 runtime="${XDG_RUNTIME_DIR:-/run/user/$UID}"

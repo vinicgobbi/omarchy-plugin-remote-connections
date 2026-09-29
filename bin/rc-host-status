@@ -9,7 +9,7 @@ set -uo pipefail
 
 TAG="omarchy-remote-connections"
 UNIT="omarchy-remote-wayvnc.service"
-DROPIN="/etc/ssh/sshd_config.d/90-omarchy-remote-connections.conf"
+DROPINS=(/etc/ssh/sshd_config.d/05-omarchy-remote-connections.conf /etc/ssh/sshd_config.d/90-omarchy-remote-connections.conf)
 socket="${XDG_RUNTIME_DIR:-/run/user/$UID}/omarchy-remote-wayvnc.sock"
 
 out() { printf '%s\t%s\n' "$1" "$2"; }
@@ -17,8 +17,10 @@ yesno() { if "$@" >/dev/null 2>&1; then echo yes; else echo no; fi; }
 
 hex() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
 
-# Scope of the firewall rule this plugin added for <what>: lan, tailscale or
-# none. ufw stores rule comments hex-encoded in its (world-readable) rules.
+# Scope of the firewall rules this plugin added for <what>: tailscale, lan
+# (private ranges only), any (a rule from an older version open to every
+# source, internet included) or none. ufw stores rule comments hex-encoded
+# in its world-readable rule files.
 fw_scope() {
   local comment tuples
   comment="comment=$(hex "$TAG $1")"
@@ -27,16 +29,28 @@ fw_scope() {
     echo none
   elif grep -q 'in_tailscale0' <<<"$tuples"; then
     echo tailscale
+  elif awk '$9 == "0.0.0.0/0" || $9 == "::/0" { found = 1 } END { exit !found }' <<<"$tuples"; then
+    echo any
   else
     echo lan
   fi
+}
+
+# What sshd actually uses for PasswordAuthentication: drop-ins are included
+# at the top of sshd_config and the first value read wins; default yes.
+ssh_password_auth() {
+  cat /etc/ssh/sshd_config.d/*.conf /etc/ssh/sshd_config 2>/dev/null \
+    | awk 'tolower($1) == "passwordauthentication" { print tolower($2); found = 1; exit } END { if (!found) print "yes" }'
 }
 
 # --- SSH server ---
 out ssh_installed "$(yesno command -v sshd)"
 out ssh_active "$(systemctl is-active sshd.service 2>/dev/null || true)"
 out ssh_enabled "$(systemctl is-enabled sshd.service 2>/dev/null || true)"
-out ssh_keys_only "$(yesno test -f "$DROPIN")"
+managed=no
+for f in "${DROPINS[@]}"; do [[ -f $f ]] && managed=yes; done
+out ssh_keys_managed "$managed"
+out ssh_password_auth "$(ssh_password_auth)"
 out ssh_firewall "$(fw_scope ssh)"
 keys=$(grep -cE '^[[:space:]]*[^#[:space:]]' "$HOME/.ssh/authorized_keys" 2>/dev/null || true)
 out authorized_keys "${keys:-0}"
