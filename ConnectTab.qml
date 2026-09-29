@@ -4,8 +4,8 @@ import qs.Ui
 import "Model.js" as Model
 
 // "Connect" tab: search + protocol chips, then the connections in sections
-// (recent, favorites, groups, ~/.ssh/config). The selected row (hover or
-// ↑/↓) shows its actions; everything else shows reachability and when it was
+// (recent, favorites, groups, ~/.ssh/config). The row under the mouse, or
+// the one picked with ↑/↓, shows its actions; everything else shows reachability and when it was
 // last used. With nothing saved yet, it shows the first-run cards instead.
 Column {
   id: tab
@@ -16,7 +16,11 @@ Column {
 
   property string query: ""
   property string protoFilter: ""        // "" | ssh | rdp | vnc
+  // Keyboard cursor (↑/↓). The mouse doesn't set it: hovering highlights a
+  // row only while the pointer is on it (hoveredId), and moving over the
+  // list hands the highlight back to the mouse.
   property string selectedId: ""
+  property string hoveredId: ""
   property string menuId: ""             // row whose ⋯ actions are open
   property string pendingDeleteId: ""
   property string copiedId: ""
@@ -39,6 +43,7 @@ Column {
     menuId = ""
     pendingDeleteId = ""
     selectedId = ""
+    hoveredId = ""
     searchField.text = ""
   }
 
@@ -47,11 +52,11 @@ Column {
     menuId = ""
     pendingDeleteId = ""
     selectedId = ""
+    hoveredId = ""
   }
 
   function toggleMenu(id) {
     pendingDeleteId = ""
-    selectedId = id
     menuId = menuId === id ? "" : id
   }
 
@@ -64,8 +69,12 @@ Column {
     return false
   }
 
+  // The row keyboard shortcuts act on: the open menu's, the keyboard
+  // cursor's, or the one under the mouse.
+  readonly property string activeId: menuId !== "" ? menuId : (selectedId !== "" ? selectedId : hoveredId)
+
   function indexOfSelected() {
-    for (var i = 0; i < flatRows.length; i++) if (flatRows[i].id === selectedId) return i
+    for (var i = 0; i < flatRows.length; i++) if (flatRows[i].id === activeId) return i
     return -1
   }
 
@@ -79,6 +88,7 @@ Column {
     var i = indexOfSelected()
     i = i < 0 ? (dy > 0 ? 0 : flatRows.length - 1) : Math.max(0, Math.min(flatRows.length - 1, i + dy))
     selectedId = flatRows[i].id
+    hoveredId = ""
     menuId = ""
   }
 
@@ -392,7 +402,7 @@ Column {
           required property var modelData
           readonly property var conn: modelData
           readonly property bool fromConfig: Model.isSshConfigEntry(conn)
-          readonly property bool isSelected: tab.selectedId === conn.id
+          readonly property bool isSelected: tab.selectedId === conn.id || tab.hoveredId === conn.id
           readonly property bool menuOpen: tab.menuId === conn.id
           // The actions stay on screen while this row's menu is open, so its
           // ✕ can always close it.
@@ -410,7 +420,16 @@ Column {
             border.color: Util.alpha(panel.accent, 0.35)
 
             HoverHandler {
-              onHoveredChanged: if (hovered && tab.menuId === "") tab.selectedId = rowItem.conn.id
+              onHoveredChanged: {
+                if (hovered) {
+                  // While a menu is open, other rows don't light up.
+                  if (tab.menuId !== "" && !rowItem.menuOpen) return
+                  tab.hoveredId = rowItem.conn.id
+                  tab.selectedId = ""
+                } else if (tab.hoveredId === rowItem.conn.id) {
+                  tab.hoveredId = ""
+                }
+              }
             }
 
             MouseArea {
@@ -423,9 +442,8 @@ Column {
                 } else if (tab.menuId !== "" && !rowItem.menuOpen) {
                   // A menu is open elsewhere: this click just closes it.
                   tab.menuId = ""
-                  tab.selectedId = rowItem.conn.id
+                  tab.hoveredId = rowItem.conn.id
                 } else {
-                  tab.selectedId = rowItem.conn.id
                   tab.primaryAction(rowItem.conn)
                 }
               }
