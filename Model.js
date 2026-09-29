@@ -7,9 +7,9 @@ var PROTOCOL_LABELS = { ssh: "SSH", rdp: "RDP", vnc: "VNC" }
 
 var DEFAULT_PORTS = { ssh: 22, rdp: 3389, vnc: 5900 }
 
-// The client each protocol needs, and the Arch package that ships it. The
-// first binary found wins (sdl-freerdp3 is the native Wayland client and has
-// its own credential/cert dialogs, so it's preferred over xfreerdp3).
+// The client each protocol needs, and the Arch package that ships it (any
+// of the binaries will do; for RDP, bin/rc-connect picks xfreerdp3 or
+// sdl-freerdp3 depending on the connection-bar option).
 var CLIENTS = {
   ssh: { binaries: ["ssh"], pkg: "openssh" },
   rdp: { binaries: ["sdl-freerdp3", "xfreerdp3"], pkg: "freerdp" },
@@ -66,7 +66,10 @@ function normalize(raw) {
       multimon: rdp.multimon === true,
       clipboard: rdp.clipboard !== false,
       // Send Omarchy's shortcuts (Super…) to the remote instead of Hyprland.
-      grabKeyboard: rdp.grabKeyboard === true
+      grabKeyboard: rdp.grabKeyboard === true,
+      // Windows-style connection bar (minimize/pin/close). Only xfreerdp3
+      // (X11, through XWayland) draws it; off uses the native sdl-freerdp3.
+      connectionBar: rdp.connectionBar !== false
     },
     vnc: {
       viewOnly: vnc.viewOnly === true

@@ -30,7 +30,9 @@ fail() {
 conn=${1:-}
 [[ -n $conn ]] || fail "rc-connect: missing connection JSON"
 
-field() { jq -r "$1 // empty" <<<"$conn"; }
+# Prints the value, or nothing when it's missing. (Not `// empty`: jq's
+# alternative operator also swallows `false`.)
+field() { jq -r "$1 | if . == null then empty else . end" <<<"$conn"; }
 
 id=$(field .id)
 name=$(field .name)
@@ -109,7 +111,14 @@ case "$protocol" in
     ;;
 
   rdp)
-    client=$(first_available sdl-freerdp3 xfreerdp3) || fail "No RDP client found. Install the 'freerdp' package."
+    # xfreerdp3 draws the Windows-style connection bar (sdl-freerdp3 accepts
+    # /floatbar but ignores it); sdl-freerdp3 is native Wayland.
+    if [[ $(field .rdp.connectionBar) == "false" ]]; then
+      client=$(first_available sdl-freerdp3 xfreerdp3)
+    else
+      client=$(first_available xfreerdp3 sdl-freerdp3)
+    fi
+    [[ -n $client ]] || fail "No RDP client found. Install the 'freerdp' package."
     domain=$(field .rdp.domain)
     args=(
       "/v:$host:${port:-3389}"
@@ -125,11 +134,13 @@ case "$protocol" in
     # By default Omarchy's own shortcuts (SUPER+W, workspaces…) keep working
     # while the window has focus; "grabKeyboard" sends them to the remote.
     [[ $(field .rdp.grabKeyboard) == "true" ]] || args+=(-grab-keyboard)
+    # Always visible (window and fullscreen), hides on its own unless pinned.
+    [[ $client == xfreerdp3 ]] && args+=("/floatbar:sticky:off,default:visible,show:always")
 
     if [[ $client == sdl-freerdp3 ]]; then
       notify "$name" "Right Shift + D disconnects · Right Shift + Enter toggles fullscreen · Right Shift + G grabs/frees the keyboard. Or use Disconnect in the Remote Connections popup."
     else
-      notify "$name" "Ctrl + Alt + Enter toggles fullscreen. Disconnect from the Remote Connections popup."
+      notify "$name" "Use the bar at the top of the window to minimize or close it. Ctrl + Alt + Enter toggles fullscreen. You can also disconnect from the Remote Connections popup."
     fi
 
     printf '%s\n' "${args[@]}" | run_client "$client" /args-from:stdin

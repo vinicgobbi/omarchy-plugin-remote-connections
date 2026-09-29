@@ -37,10 +37,16 @@ Passwords live in the GNOME keyring, never in a plain file.
 - **Active sessions** show at the top of the Connect tab while an RDP or VNC
   window is open, with **Show** (bring it to the front) and **Disconnect** —
   a way out even when the remote window holds the keyboard.
+- **RDP connection bar:** RDP opens with a Windows-style bar at the top of
+  the window (minimize, pin, close), drawn by `xfreerdp3` through XWayland.
+  Turn off *Connection bar* in a connection's Advanced options to use the
+  native Wayland client (`sdl-freerdp3`) instead; there, **Right Shift + D**
+  disconnects, **Right Shift + Enter** toggles fullscreen and
+  **Right Shift + G** grabs/frees the keyboard. With fractional monitor
+  scaling, XWayland may look slightly soft — that's when the native client
+  is the better pick.
 - **Getting out of a remote window:** when it opens, a notification lists
-  the client's own shortcuts. FreeRDP (`sdl-freerdp3`): **Right Shift + D**
-  disconnects, **Right Shift + Enter** toggles fullscreen, **Right Shift + G**
-  grabs/frees the keyboard. TigerVNC: **F8** opens its menu (Exit viewer,
+  how to leave it. TigerVNC (VNC): **F8** opens its menu (Exit viewer,
   fullscreen). By default RDP windows **don't** grab the keyboard, so Omarchy
   shortcuts (Super+W, workspaces…) keep working; turn on *Send Omarchy
   shortcuts to the remote computer* in a connection's Advanced options to

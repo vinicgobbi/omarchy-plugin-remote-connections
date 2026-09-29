@@ -29,6 +29,7 @@ Column {
   property bool dClipboard: true
   property bool dMultimon: false
   property bool dGrabKeyboard: false
+  property bool dConnectionBar: true
   property bool dViewOnly: false
   property string dPassword: ""
   property bool dForgetPassword: false
@@ -69,10 +70,11 @@ Column {
     dClipboard = d.rdp.clipboard
     dMultimon = d.rdp.multimon
     dGrabKeyboard = d.rdp.grabKeyboard
+    dConnectionBar = d.rdp.connectionBar
     dViewOnly = d.vnc.viewOnly
     dPassword = ""
     dForgetPassword = false
-    showAdvanced = dJump !== "" || dDomain !== "" || dMultimon || dViewOnly || !dClipboard || dGrabKeyboard
+    showAdvanced = dJump !== "" || dDomain !== "" || dMultimon || dViewOnly || !dClipboard || dGrabKeyboard || !dConnectionBar
       || (dIdentity !== "" && store.sshKeys.indexOf(dIdentity) < 0)
     addingGroup = false
     error = ""
@@ -97,7 +99,7 @@ Column {
       hasSecret: existing ? existing.hasSecret && !dForgetPassword && dProtocol !== "ssh" : false,
       identityFile: dProtocol === "ssh" ? dIdentity : "",
       jumpHost: dProtocol === "ssh" ? dJump : "",
-      rdp: { domain: dDomain, clipboard: dClipboard, multimon: dMultimon, grabKeyboard: dGrabKeyboard },
+      rdp: { domain: dDomain, clipboard: dClipboard, multimon: dMultimon, grabKeyboard: dGrabKeyboard, connectionBar: dConnectionBar },
       vnc: { viewOnly: dViewOnly }
     }
   }
@@ -495,7 +497,7 @@ Column {
   // ===== Advanced =====
   Pill {
     width: parent.width
-    text: (form.showAdvanced ? "▾ " : "▸ ") + "Advanced · " + (form.dProtocol === "ssh" ? "jump host, key file" : form.dProtocol === "rdp" ? "domain, keyboard, clipboard, monitors" : "view only")
+    text: (form.showAdvanced ? "▾ " : "▸ ") + "Advanced · " + (form.dProtocol === "ssh" ? "jump host, key file" : form.dProtocol === "rdp" ? "connection bar, keyboard, domain, clipboard, monitors" : "view only")
     tint: panel.foreground
     bold: false
     fontFamily: panel.fontFamily
@@ -554,9 +556,22 @@ Column {
     Toggle {
       visible: form.dProtocol === "rdp"
       width: parent.width
+      label: "Connection bar (Windows-style)"
+      description: form.dConnectionBar
+        ? "A bar at the top with minimize and close (xfreerdp3, through XWayland)."
+        : "Native Wayland client (sdl-freerdp3), no bar: Right Shift + D disconnects."
+      checked: form.dConnectionBar
+      foreground: panel.foreground
+      accent: panel.accent
+      fontFamily: panel.fontFamily
+      onClicked: form.dConnectionBar = !form.dConnectionBar
+    }
+    Toggle {
+      visible: form.dProtocol === "rdp"
+      width: parent.width
       label: "Send Omarchy shortcuts to the remote computer"
       description: form.dGrabKeyboard
-        ? "Super, Alt+Tab… go to Windows. Right Shift + G frees the keyboard; Right Shift + D disconnects."
+        ? "Super, Alt+Tab… go to Windows. " + (form.dConnectionBar ? "Close it from the bar at the top." : "Right Shift + G frees the keyboard; Right Shift + D disconnects.")
         : "Off: Super+W, workspaces and other Omarchy shortcuts keep working while the window has focus."
       checked: form.dGrabKeyboard
       foreground: panel.foreground

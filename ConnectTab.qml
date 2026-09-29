@@ -371,7 +371,7 @@ Column {
             Text {
               width: parent.width
               text: "● connected " + Model.relativeTime(session.modelData.started, tab.now).replace(" ago", "").replace("just now", "now")
-                + (session.modelData.protocol === "rdp" ? " · Right Shift+D" : " · F8 menu")
+                + (session.modelData.protocol === "vnc" ? " · F8 menu" : "")
               elide: Text.ElideRight
               color: panel.okColor
               font.family: panel.fontFamily
