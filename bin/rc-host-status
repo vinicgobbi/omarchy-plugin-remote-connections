@@ -40,6 +40,9 @@ out ssh_keys_only "$(yesno test -f "$DROPIN")"
 out ssh_firewall "$(fw_scope ssh)"
 keys=$(grep -cE '^[[:space:]]*[^#[:space:]]' "$HOME/.ssh/authorized_keys" 2>/dev/null || true)
 out authorized_keys "${keys:-0}"
+ssh_port=$(cat /etc/ssh/sshd_config.d/*.conf /etc/ssh/sshd_config 2>/dev/null \
+  | awk 'tolower($1) == "port" && $2 ~ /^[0-9]+$/ { print $2; exit }')
+out ssh_port "${ssh_port:-22}"
 
 # --- Firewall / network ---
 ufw_enabled=no
@@ -56,7 +59,8 @@ out vnc_firewall "$(fw_scope vnc)"
 clients=""
 if [[ -S $socket ]] && command -v wayvncctl >/dev/null 2>&1; then
   clients=$(wayvncctl -S "$socket" --json client-list 2>/dev/null \
-    | jq -r 'if type == "array" then .[] | (.address // "unknown") else empty end' 2>/dev/null \
+    | jq -r 'if type == "array" then .[] | "\(.id)=\(.address // "unknown")" else empty end' 2>/dev/null \
     | paste -sd, -)
 fi
+# "id=address" per viewer, comma-separated.
 out vnc_clients "$clients"

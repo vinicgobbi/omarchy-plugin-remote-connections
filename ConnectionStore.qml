@@ -30,6 +30,14 @@ Item {
 
   readonly property bool secretBusy: secretProcess.running
 
+  // Reachability, by connection id: { state: "up"|"down"|"checking"|"unknown", ms }.
+  // Filled by bin/rc-probe (a TCP connect to host:port, no data sent).
+  property var reach: ({})
+  // SSH private keys with a .pub in ~/.ssh (bin/rc-ssh-keys), e.g. "~/.ssh/id_ed25519".
+  property var sshKeys: []
+  // Last result of testTarget(): { state, ms, banner, host, port }.
+  property var testResult: null
+
   function bundledPath(name) {
     return decodeURIComponent(String(Qt.resolvedUrl(name)).replace(/^file:\/\//, ""))
   }
@@ -132,7 +140,9 @@ Item {
     return out
   }
 
-  readonly property bool installBusy: installProcess.running
+  // A terminal from bin/rc-terminal is open (install, key setup…).
+  readonly property bool terminalBusy: terminalProcess.running
+  readonly property bool installBusy: terminalBusy
 
   function installClient(protocol) {
     installPackages([Model.clientPackage(protocol)])
@@ -142,10 +152,27 @@ Item {
   // (bin/rc-terminal); re-checks the clients once it's closed.
   function installPackages(pkgs) {
     var list = (pkgs || []).filter(function(p) { return p !== "" })
-    if (list.length === 0 || installProcess.running) return
+    if (list.length === 0) return
+    runInTerminal("Install " + list.join(", "), ["install"].concat(list))
+  }
+
+  // Create an SSH key if there's none and copy it to the connection's
+  // server (ssh-keygen + ssh-copy-id, shown in the terminal first).
+  function setupSshKey(c) {
+    if (!c || c.protocol !== "ssh" || Model.isSshConfigEntry(c)) return
+    var target = (c.user ? c.user + "@" : "") + c.host
+    var args = ["ssh-key-setup", target]
+    if (c.port && c.port !== 22) args.push(String(c.port))
+    runInTerminal("Log in to " + c.name + " with a key", args)
+  }
+
+  // Opens the command terminal (bin/rc-terminal) for `args`; re-checks
+  // clients and keys once it's closed.
+  function runInTerminal(title, args) {
+    if (terminalProcess.running) return
     lastError = ""
-    installProcess.command = [bundledPath("bin/rc-terminal"), "Install " + list.join(", "), "install"].concat(list)
-    installProcess.running = true
+    terminalProcess.command = [bundledPath("bin/rc-terminal"), title].concat(args)
+    terminalProcess.running = true
   }
 
   // --- Keyring (bin/rc-secret). One operation at a time; the password goes
@@ -185,6 +212,52 @@ Item {
   function refresh() {
     clientCheck.running = true
     sshHostsProcess.running = true
+    sshKeysProcess.running = true
+  }
+
+  // Probe every saved connection and ~/.ssh/config host that can be checked
+  // directly (not ones behind a jump host).
+  function probeAll() {
+    if (probeProcess.running) return
+    var args = []
+    var next = {}
+    var all = connections.concat(Model.unsavedSshHosts(connections, sshHosts))
+    for (var i = 0; i < all.length; i++) {
+      var t = Model.probeTarget(all[i])
+      var prev = reach[all[i].id]
+      if (!t) { next[all[i].id] = { state: "unknown", ms: 0 }; continue }
+      next[all[i].id] = prev && prev.state !== "unknown" ? prev : { state: "checking", ms: 0 }
+      args.push(all[i].id, t.host, String(t.port))
+    }
+    reach = next
+    if (args.length === 0) return
+    probeProcess.command = [bundledPath("bin/rc-probe")].concat(args)
+    probeProcess.running = true
+  }
+
+  function reachOf(id) {
+    return reach[id] || { state: "unknown", ms: 0 }
+  }
+
+  // The form's Test button: connect once, and read the greeting if any.
+  function testTarget(host, port) {
+    if (testProcess.running) return
+    testResult = { state: "checking", ms: 0, banner: "", host: host, port: port }
+    testProcess.command = [bundledPath("bin/rc-probe"), "--banner", "test", String(host), String(port)]
+    testProcess.running = true
+  }
+
+  // A copy named "<name> (copy)", not a favorite, never used, no password.
+  function duplicate(id) {
+    var c = find(id)
+    if (!c) return null
+    var copy = JSON.parse(JSON.stringify(c))
+    copy.id = Model.newId()
+    copy.name = c.name + " (copy)"
+    copy.favorite = false
+    copy.lastUsed = 0
+    copy.hasSecret = false
+    return upsert(copy)
   }
 
   Component.onCompleted: {
@@ -226,13 +299,58 @@ Item {
   }
 
   Process {
-    id: installProcess
+    id: terminalProcess
     running: false
     command: []
-    stderr: StdioCollector { id: installErr; waitForEnd: true }
+    stderr: StdioCollector { id: terminalErr; waitForEnd: true }
     onExited: function(exitCode) {
-      if (exitCode === 1) root.lastError = String(installErr.text || "").trim() || "The install failed."
+      if (exitCode === 1) root.lastError = String(terminalErr.text || "").trim() || "It failed in the terminal."
       root.refresh()
+    }
+  }
+
+  Process {
+    id: probeProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: probeOut; waitForEnd: true }
+    onExited: {
+      var next = {}
+      for (var k in root.reach) next[k] = root.reach[k]
+      var lines = String(probeOut.text || "").split("\n")
+      for (var i = 0; i < lines.length; i++) {
+        var f = lines[i].split("\t")
+        if (f.length >= 3) next[f[0]] = { state: f[1], ms: parseInt(f[2], 10) || 0 }
+      }
+      root.reach = next
+    }
+  }
+
+  Process {
+    id: testProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: testOut; waitForEnd: true }
+    onExited: {
+      var f = String(testOut.text || "").replace(/\n$/, "").split("\t")
+      var prev = root.testResult || {}
+      root.testResult = {
+        state: f[1] === "up" ? "up" : "down",
+        ms: parseInt(f[2], 10) || 0,
+        banner: f[3] || "",
+        host: prev.host,
+        port: prev.port
+      }
+    }
+  }
+
+  Process {
+    id: sshKeysProcess
+    running: false
+    command: [root.bundledPath("bin/rc-ssh-keys")]
+    stdout: StdioCollector { id: sshKeysOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode === 0) root.sshKeys = String(sshKeysOut.text || "").split("\n").filter(function(l) { return l !== "" })
     }
   }
 

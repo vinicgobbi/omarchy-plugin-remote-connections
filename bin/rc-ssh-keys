@@ -1,0 +1,15 @@
+#!/bin/bash
+
+# List the SSH private keys in ~/.ssh that have a matching .pub next to
+# them, one path per line (~ kept literal), for the form's key picker.
+# Read-only; never prints key contents.
+
+set -uo pipefail
+
+shopt -s nullglob
+for pub in "$HOME"/.ssh/*.pub; do
+  key=${pub%.pub}
+  [[ -f $key ]] || continue
+  # shellcheck disable=SC2088 # a literal ~ is what the form shows and stores
+  printf '~/.ssh/%s\n' "${key##*/}"
+done

@@ -1,0 +1,49 @@
+#!/bin/bash
+
+# Check whether hosts answer on their port: a plain TCP connect, no data
+# sent, no root. Takes targets as `id host port` triples, probes them all in
+# parallel and prints `id<TAB>up|down<TAB>milliseconds` per line.
+#
+#   rc-probe [--banner] <id> <host> <port> [<id> <host> <port>]...
+#
+# --banner also prints the first line the server sends (e.g. SSH's
+# "SSH-2.0-OpenSSH_10.0") as a 4th field; used by the form's Test button.
+
+set -uo pipefail
+
+TIMEOUT=${RC_PROBE_TIMEOUT:-2}
+banner=false
+if [[ ${1:-} == --banner ]]; then
+  banner=true
+  shift
+fi
+
+# The inner `bash -c` scripts use their own $0/$1/$l.
+# shellcheck disable=SC2016
+probe() {
+  local id=$1 host=$2 port=$3 start ms line=""
+  if ! [[ $port =~ ^[0-9]+$ ]] || [[ -z $host || $host == -* || $host == *[[:space:]/]* ]]; then
+    printf '%s\tdown\t0\n' "$id"
+    return
+  fi
+  start=$(date +%s%N)
+  if ! timeout "$TIMEOUT" bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$host" "$port" 2>/dev/null; then
+    printf '%s\tdown\t0\n' "$id"
+    return
+  fi
+  ms=$(( ($(date +%s%N) - start) / 1000000 ))
+  if ! $banner; then
+    printf '%s\tup\t%s\n' "$id" "$ms"
+    return
+  fi
+  # Second connection: give the server 1s to greet (SSH and VNC do; RDP
+  # waits for the client, so its banner stays empty).
+  line=$(timeout "$TIMEOUT" bash -c 'exec 3<>"/dev/tcp/$0/$1" || exit 1; IFS= read -r -t 1 l <&3; printf "%s" "${l%$'"'"'\r'"'"'}"' "$host" "$port" 2>/dev/null)
+  printf '%s\tup\t%s\t%s\n' "$id" "$ms" "${line//$'\t'/ }"
+}
+
+while (( $# >= 3 )); do
+  probe "$1" "$2" "$3" &
+  shift 3
+done
+wait

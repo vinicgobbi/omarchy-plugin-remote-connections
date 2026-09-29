@@ -221,6 +221,9 @@ function parseSshHosts(text) {
     c.source = "ssh-config"
     var real = { user: clean(f[2]), host: clean(f[1]) || alias, port: toPort(f[3], "ssh"), protocol: "ssh" }
     c.display = address(real)
+    // What to probe for "is it up": the real hostname/port, not the alias.
+    c.probeHost = real.host
+    c.probePort = real.port
     out.push(c)
   }
   return out
@@ -252,4 +255,69 @@ function quickList(connections, sshHosts, query) {
     var na = a.name.toLowerCase(), nb = b.name.toLowerCase()
     return na < nb ? -1 : (na > nb ? 1 : 0)
   })
+}
+
+// --- Connect tab ---
+
+// Host/port to check for reachability, or null when a direct TCP check
+// wouldn't mean anything (only reachable through a jump host).
+function probeTarget(c) {
+  if (!c || c.jumpHost) return null
+  if (isSshConfigEntry(c)) return { host: c.probeHost, port: c.probePort }
+  return { host: c.host, port: c.port }
+}
+
+function protocolCounts(connections, sshHosts) {
+  var all = (connections || []).concat(unsavedSshHosts(connections, sshHosts))
+  var counts = { all: all.length, ssh: 0, rdp: 0, vnc: 0 }
+  for (var i = 0; i < all.length; i++) counts[all[i].protocol] = (counts[all[i].protocol] || 0) + 1
+  return counts
+}
+
+// Sections for the Connect tab. Searching or filtering by protocol gives a
+// flat RESULTS list (ranked like the launcher); otherwise RECENT (the last
+// 3 used), FAVORITES, one section per group, CONNECTIONS (ungrouped) and
+// FROM ~/.SSH/CONFIG, each connection appearing once.
+function connectSections(connections, sshHosts, query, protocol) {
+  var proto = PROTOCOLS.indexOf(protocol) >= 0 ? protocol : ""
+  var byProto = function(c) { return proto === "" || c.protocol === proto }
+  if (clean(query) !== "" || proto !== "") {
+    var hits = quickList(connections, sshHosts, query).filter(byProto)
+    return hits.length > 0 ? [{ title: "RESULTS", rows: hits }] : []
+  }
+  var saved = connections || []
+  var used = {}
+  var sections = []
+  var recent = saved.filter(function(c) { return c.lastUsed > 0 })
+    .sort(function(a, b) { return b.lastUsed - a.lastUsed }).slice(0, 3)
+  recent.forEach(function(c) { used[c.id] = true })
+  if (recent.length > 0 && saved.length > 3) sections.push({ title: "RECENT", rows: recent })
+  else used = {}
+  var rest = sorted(saved.filter(function(c) { return !used[c.id] }))
+  var favorites = rest.filter(function(c) { return c.favorite })
+  if (favorites.length > 0) sections.push({ title: "FAVORITES", rows: favorites })
+  var groupNames = groups(rest.filter(function(c) { return !c.favorite }))
+  groupNames.forEach(function(g) {
+    sections.push({ title: g.toUpperCase(), rows: rest.filter(function(c) { return !c.favorite && c.group === g }) })
+  })
+  var ungrouped = rest.filter(function(c) { return !c.favorite && c.group === "" })
+  if (ungrouped.length > 0) sections.push({ title: groupNames.length > 0 || favorites.length > 0 ? "OTHER" : "CONNECTIONS", rows: ungrouped })
+  var cfg = unsavedSshHosts(saved, sshHosts)
+  if (cfg.length > 0) sections.push({ title: "FROM ~/.SSH/CONFIG", rows: cfg })
+  return sections
+}
+
+function relativeTime(ts, now) {
+  if (!ts) return "never"
+  var s = Math.max(0, Math.round(((now || Date.now()) - ts) / 1000))
+  if (s < 60) return "just now"
+  var m = Math.round(s / 60)
+  if (m < 60) return m + " min ago"
+  var h = Math.round(m / 60)
+  if (h < 24) return h + " h ago"
+  var d = Math.round(h / 24)
+  if (d === 1) return "yesterday"
+  if (d < 30) return d + " days ago"
+  var mo = Math.round(d / 30)
+  return mo < 12 ? mo + " mo ago" : Math.round(mo / 12) + " y ago"
 }

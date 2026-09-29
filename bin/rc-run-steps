@@ -56,7 +56,21 @@ confirm() {
   fi
 }
 
-mapfile -t steps < <("$here/rc-steps" "$@" 2>"$run_dir/run-$token.err")
+mapfile -t plan < <("$here/rc-steps" "$@" 2>"$run_dir/run-$token.err")
+steps=()
+afters=()
+undos=()
+uses_sudo=false
+for line in "${plan[@]}"; do
+  case "$line" in
+    "#after"$'\t'*) afters+=("${line#*$'\t'}") ;;
+    "#undo"$'\t'*) undos+=("${line#*$'\t'}") ;;
+    *)
+      steps+=("$line")
+      [[ ${line#*$'\t'} == *sudo\ * ]] && uses_sudo=true
+      ;;
+  esac
+done
 if [[ -s $run_dir/run-$token.err ]]; then
   message=$(<"$run_dir/run-$token.err")
   style --foreground 1 --bold "Can't continue: $message"
@@ -74,7 +88,17 @@ fi
 clear
 style --bold --foreground 212 "Remote Connections · $title"
 echo
-echo "The plugin wants to run these commands on this machine:"
+if (( ${#afters[@]} > 0 )); then
+  style --bold "After this"
+  for a in "${afters[@]}"; do echo "  • $a"; done
+  echo
+fi
+if (( ${#undos[@]} > 0 )); then
+  style --bold "To undo"
+  for u in "${undos[@]}"; do echo "  • $u"; done
+  echo
+fi
+style --bold "Commands (run exactly as shown)"
 echo
 i=0
 for s in "${steps[@]}"; do
@@ -83,10 +107,15 @@ for s in "${steps[@]}"; do
   style --foreground 6 --padding "0 3" "\$ ${s#*$'\t'}"
 done
 echo
-style --border rounded --border-foreground 3 --foreground 3 --padding "0 1" --width 70 \
-  "⚠  These commands change your system (services, firewall, packages).
+if $uses_sudo; then
+  warning="⚠  These commands change your system (services, firewall, packages).
 Only run them if you know what they do. Commands starting with sudo
 will ask for your password."
+else
+  warning="⚠  These commands change files on this computer or on the server
+you named. Only run them if you know what they do."
+fi
+style --border rounded --border-foreground 3 --foreground 3 --padding "0 1" --width 70 "$warning"
 echo
 
 if have_gum; then

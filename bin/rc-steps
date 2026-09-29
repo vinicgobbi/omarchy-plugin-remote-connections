@@ -3,7 +3,8 @@
 # Plan the system changes for one or more actions, without running anything.
 # Prints one step per line, `description<TAB>command`; the command is exactly
 # what bin/rc-run-steps shows to the user and then runs (through `bash -c`),
-# so what you read in the terminal is what executes.
+# so what you read in the terminal is what executes. Lines starting with
+# `#after<TAB>` / `#undo<TAB>` summarize the result and how to reverse it.
 #
 #   rc-steps <action> [args...] [+ <action> [args...]]...
 #
@@ -14,6 +15,8 @@
 #   keys-on | keys-off            turn SSH password logins off / back on
 #   vnc-firewall lan|tailscale <port>
 #   vnc-firewall close
+#   ssh-key-setup [user@]host [port]   create a key if needed, ssh-copy-id it
+#   authorize-key '<public key>'       let that key log in to this machine
 #
 # Firewall rules added here carry the comment "omarchy-remote-connections
 # <ssh|vnc>". Only rules with that comment are ever removed: they're looked up
@@ -34,6 +37,9 @@ die() {
 step() {
   printf '%s\t%s\n' "$1" "$2"
 }
+
+after() { printf '#after\t%s\n' "$1"; }
+undo() { printf '#undo\t%s\n' "$1"; }
 
 ufw_enabled() {
   grep -qE '^ENABLED=yes' "$UFW_DIR/ufw.conf" 2>/dev/null
@@ -100,6 +106,8 @@ plan() {
         [[ $pkg =~ ^[a-z0-9][a-z0-9+._-]*$ ]] || die "invalid package name: $pkg"
       done
       step "Install $* with Omarchy's package installer (it runs sudo pacman for whatever is missing)" "omarchy pkg add $*"
+      after "$* installed"
+      undo "sudo pacman -Rns $*"
       ;;
 
     ssh-enable)
@@ -108,11 +116,23 @@ plan() {
       step "Start the SSH server now and at every boot" "sudo systemctl enable --now sshd.service"
       close_steps ssh
       open_step ssh "$scope" "$(ssh_port)"
+      after "SSH server runs now and at every boot, on port $(ssh_port)"
+      if ! ufw_enabled; then
+        after "Firewall is off: SSH is reachable from every network you're on"
+      elif [[ $scope == tailscale ]]; then
+        after "Only devices on your tailnet can reach it"
+      else
+        after "Devices on your local network can reach it"
+      fi
+      if [[ -f $DROPIN ]]; then after "Only SSH keys can log in (Keys only is on)"; else after "Password logins are allowed"; fi
+      undo "Turn the SSH server off in the plugin; it runs the reverse commands the same way"
       ;;
 
     ssh-disable)
       step "Stop the SSH server and don't start it at boot" "sudo systemctl disable --now sshd.service"
       close_steps ssh
+      after "Nobody can log in to this computer over SSH"
+      undo "Turn the SSH server on again in the plugin"
       ;;
 
     keys-on)
@@ -125,6 +145,8 @@ plan() {
       if systemctl is-active --quiet sshd.service; then
         step "Reload the running SSH server so the change applies" "sudo systemctl reload sshd.service"
       fi
+      after "Only the keys in ~/.ssh/authorized_keys can log in over SSH; passwords are refused"
+      undo "Turn Require keys off in the plugin (or: sudo rm $DROPIN)"
       ;;
 
     keys-off)
@@ -132,18 +154,68 @@ plan() {
       if systemctl is-active --quiet sshd.service; then
         step "Reload the running SSH server so the change applies" "sudo systemctl reload sshd.service"
       fi
+      after "Your account password works for SSH logins again"
+      undo "Turn Require keys on in the plugin"
       ;;
 
     vnc-firewall)
       local scope=${1:-}
       if [[ $scope == close ]]; then
         close_steps vnc
+        after "The screen-sharing port is closed in the firewall"
       else
         [[ $scope == lan || $scope == tailscale ]] || die "vnc-firewall: scope must be lan, tailscale or close"
         check_port "${2:-}"
         close_steps vnc
         open_step vnc "$scope" "$2"
+        if [[ $scope == tailscale ]]; then
+          after "Devices on your tailnet can reach screen sharing on port $2 (password required)"
+        else
+          after "Devices on your local network can reach screen sharing on port $2 (password required)"
+        fi
+        undo "Turn screen sharing off in the plugin; it closes the port the same way"
       fi
+      ;;
+
+    ssh-key-setup)
+      # The key path stays a literal ~/…: it's shown to the user, and the
+      # `bash -c` that runs the step expands it.
+      # shellcheck disable=SC2088
+      local target=${1:-} port=${2:-} key="" candidate
+      [[ $target =~ ^([A-Za-z0-9._-]+@)?[A-Za-z0-9._:-]+$ && $target != -* ]] \
+        || die "ssh-key-setup: invalid target: $target"
+      [[ -z $port ]] || check_port "$port"
+      for candidate in id_ed25519 id_ecdsa id_rsa; do
+        if [[ -f $HOME/.ssh/$candidate && -f $HOME/.ssh/$candidate.pub ]]; then
+          # shellcheck disable=SC2088
+          key="~/.ssh/$candidate"
+          break
+        fi
+      done
+      if [[ -z $key ]]; then
+        # shellcheck disable=SC2088
+        key="~/.ssh/id_ed25519"
+        step "Create a new SSH key (it asks for an optional passphrase)" \
+          "ssh-keygen -t ed25519 -f $key -C \"\$USER@\$(uname -n)\""
+      fi
+      step "Copy your public key to $target (asks for its password once)" \
+        "ssh-copy-id -i $key.pub${port:+ -p $port} $target"
+      after "You log in to $target with your key ($key) instead of its password"
+      undo "On $target, delete the line with your key from ~/.ssh/authorized_keys"
+      ;;
+
+    authorize-key)
+      local pubkey=${1:-}
+      [[ $pubkey =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)\ [A-Za-z0-9+/]+=*(\ [^\']*)?$ ]] \
+        || die "That doesn't look like an SSH public key (it should start with ssh-ed25519, ssh-rsa or ecdsa-…)."
+      local label
+      read -r _ _ label <<<"$pubkey"
+      [[ -n $label ]] || label="this key"
+      step "Create ~/.ssh if needed, readable only by you" "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
+      step "Add the key ($label) to ~/.ssh/authorized_keys" \
+        "printf '%s\\n' '$pubkey' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+      after "Whoever holds the private key for \"$label\" can log in to this computer over SSH"
+      undo "Delete that line from ~/.ssh/authorized_keys"
       ;;
 
     *)

@@ -24,6 +24,7 @@ Item {
   property bool sshKeysOnly: false
   property string sshFirewall: "none"      // none | lan | tailscale
   property int authorizedKeys: 0
+  property int sshPort: 22
   property bool ufwEnabled: false
   property var lanIps: []
   property string tailscaleIp: ""
@@ -31,13 +32,15 @@ Item {
   property bool wayvncInstalled: false
   property bool vncActive: false
   property string vncFirewall: "none"
-  property var vncClients: []
+  property var vncClients: []              // addresses, for the tooltip
+  property var vncViewers: []              // [{ id, address }]
 
   // --- Persisted preferences (host.json) ---
   property string vncScope: "local"        // local | tailscale | lan
   property int vncPort: 5900
   property bool vncPasswordSet: false
   property string sshScope: "lan"          // lan | tailscale
+  property bool vncAllowControl: true
 
   // --- Jobs ---
   property string busy: ""                 // label of the running job, "" when idle
@@ -98,7 +101,8 @@ Item {
       sshScope: sshScope,
       vncScope: vncScope,
       vncPort: vncPort,
-      vncPasswordSet: vncPasswordSet
+      vncPasswordSet: vncPasswordSet,
+      vncAllowControl: vncAllowControl
     }, null, 2) + "\n")
   }
 
@@ -109,6 +113,26 @@ Item {
     savePrefs()
     run("ssh", inTerminal("Turn on the SSH server", ["ssh-enable", sshScope]), function(ok, code, err) {
       if (!ok) lastError = describeFailure(code, err, "Turning on the SSH server")
+    })
+  }
+
+  // Picking who can connect: remembered for next time while SSH is off,
+  // applied right away (through the terminal) while it's on.
+  function chooseSshScope(scope) {
+    if (scope !== "lan" && scope !== "tailscale") return
+    if (sshActive && scope !== sshFirewall && ufwEnabled) {
+      enableSsh(scope)
+    } else {
+      sshScope = scope
+      savePrefs()
+    }
+  }
+
+  // Adds a public key to ~/.ssh/authorized_keys, through the terminal.
+  function authorizeKey(pubkey) {
+    lastError = ""
+    run("keys", inTerminal("Allow a key to log in", ["authorize-key", String(pubkey).trim()]), function(ok, code, err) {
+      if (!ok) lastError = describeFailure(code, err, "Adding the key")
     })
   }
 
@@ -151,7 +175,7 @@ Item {
   function _startVnc() {
     var scope = vncScope
     var port = String(vncPort)
-    run("vnc", [bundledPath("bin/rc-vnc"), "start", scope, port], function(ok, code, err) {
+    run("vnc", [bundledPath("bin/rc-vnc"), "start", scope, port, vncAllowControl ? "control" : "view-only"], function(ok, code, err) {
       if (!ok) {
         lastError = describeFailure(code, err, "Starting screen sharing")
         return
@@ -183,6 +207,25 @@ Item {
       })
   }
 
+  // Picking who can reach screen sharing: remembered while it's off,
+  // applied right away (restarting wayvnc, which drops viewers) while on.
+  function chooseVncScope(scope) {
+    if (["local", "tailscale", "lan"].indexOf(scope) < 0) return
+    vncScope = scope
+    savePrefs()
+    if (vncActive) startVnc(scope, "")
+  }
+
+  function setVncAllowControl(allow) {
+    vncAllowControl = allow
+    savePrefs()
+    if (vncActive) startVnc(vncScope, "")
+  }
+
+  function disconnectViewer(id) {
+    run("vnc", [bundledPath("bin/rc-vnc"), "disconnect", String(id)], null)
+  }
+
   function disconnectVncClients() {
     run("vnc", [bundledPath("bin/rc-vnc"), "disconnect-all"], null)
   }
@@ -208,6 +251,7 @@ Item {
     sshKeysOnly = map.ssh_keys_only === "yes"
     sshFirewall = map.ssh_firewall || "none"
     authorizedKeys = parseInt(map.authorized_keys, 10) || 0
+    sshPort = parseInt(map.ssh_port, 10) || 22
     ufwEnabled = map.ufw_enabled === "yes"
     lanIps = list(map.lan_ips)
     tailscaleIp = map.tailscale_ip || ""
@@ -215,7 +259,11 @@ Item {
     wayvncInstalled = map.wayvnc_installed === "yes"
     vncActive = map.vnc_active === "active"
     vncFirewall = map.vnc_firewall || "none"
-    vncClients = list(map.vnc_clients)
+    vncViewers = list(map.vnc_clients).map(function(entry) {
+      var eq = entry.indexOf("=")
+      return eq > 0 ? { id: entry.slice(0, eq), address: entry.slice(eq + 1) } : { id: "", address: entry }
+    })
+    vncClients = vncViewers.map(function(v) { return v.address })
     loaded = true
   }
 
@@ -247,6 +295,7 @@ Item {
         if (isFinite(port) && port > 0 && port < 65536) root.vncPort = port
         root.vncPasswordSet = p.vncPasswordSet === true
         if (p.sshScope === "tailscale" || p.sshScope === "lan") root.sshScope = p.sshScope
+        root.vncAllowControl = p.vncAllowControl !== false
       } catch (e) {
         // Keep defaults; the file is rewritten on the next change.
       }
