@@ -192,6 +192,7 @@ Column {
 
     Repeater {
       model: [
+        { icon: "󰒓", title: "Install what you need", text: "RDP and VNC clients, screen sharing… see what's installed and add it in one go. Also under the gear, top right.", action: "setup" },
         { icon: "󰐕", title: "Add a connection", text: "SSH, RDP (Windows) or VNC. Passwords stay in your keyring.", action: "new" },
         { icon: "󰒃", title: "Let others reach this computer", text: "SSH and screen sharing are off. Turn them on for your local network or Tailscale only; you'll see every command first.", action: "machine" }
       ]
@@ -251,7 +252,11 @@ Column {
         MouseArea {
           anchors.fill: parent
           cursorShape: Qt.PointingHandCursor
-          onClicked: card.modelData.action === "new" ? panel.openForm("new", null) : panel.showTab("machine")
+          onClicked: {
+            if (card.modelData.action === "new") panel.openForm("new", null)
+            else if (card.modelData.action === "setup") panel.openSetup()
+            else panel.showTab("machine")
+          }
         }
       }
     }
