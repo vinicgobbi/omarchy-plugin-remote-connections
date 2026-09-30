@@ -1,0 +1,17 @@
+#!/bin/bash
+
+# Which of the given packages are installed, for the Setup view:
+# one `name<TAB>yes|no` line per package. Read-only.
+#
+#   rc-packages <package>...
+
+set -uo pipefail
+
+for pkg in "$@"; do
+  [[ $pkg =~ ^[a-z0-9][a-z0-9+._-]*$ ]] || continue
+  if pacman -Q "$pkg" >/dev/null 2>&1; then
+    printf '%s\tyes\n' "$pkg"
+  else
+    printf '%s\tno\n' "$pkg"
+  fi
+done

@@ -48,6 +48,12 @@ omarchy plugin validate .
   sharing cards) and `ConnectionForm.qml` (add/edit). `Pill.qml` is the
   small button they share. Status colors (green/yellow/blue/magenta) come
   from the current theme's `colors.toml`, since the shell palette has none
+- `ChangeSheet.qml` — the review sheet (its own overlay window): loads a plan
+  from `bin/rc-steps`, shows it, runs the ticked commands in one
+  `pkexec /usr/bin/bash -c <script>` with `::rc-step N start|end` markers for
+  live progress, and offers Undo (the plan's `#reverse` action), Retry and
+  the terminal. Interactive plans go straight to `bin/rc-terminal`
+- `SetupView.qml` — the Setup view behind the header's gear
 - `QuickConnect.qml` — the keyboard launcher (overlay), modeled on the
   built-in emoji picker; summoned with
   `omarchy-shell shell toggle vinicgobbi.remote-connections`
@@ -67,17 +73,20 @@ omarchy plugin validate .
 - `bin/rc-ssh-hosts` — lists concrete `Host` aliases from `~/.ssh/config`
   and its `Include`s (read-only)
 - `bin/rc-steps` — plans system changes without running anything: one
-  `description<TAB>command` per step (sshd, the *Keys only* drop-in,
+  `mode<TAB>description<TAB>command` per step (mode `root`, `user` or
+  `interactive`), plus `#after`/`#undo`/`#reverse` lines (sshd, the *Keys only* drop-in,
   `omarchy pkg add` for packages,
   ufw rules tagged `omarchy-remote-connections <ssh|vnc>` — the only rules
   it removes). Actions can be chained with `+`
+- `bin/rc-packages` — which of the managed packages are installed
 - `bin/rc-terminal` — opens an Omarchy floating terminal running
   `bin/rc-run-steps`, waits for it and exits with its outcome
   (0 done, 1 failed, 2 canceled, 3 closed, 4 some steps skipped)
-- `bin/rc-run-steps` — the terminal side: lists the steps and exact
-  commands, warns, asks *run all / confirm each / cancel*, then runs each
-  command with `bash -c` exactly as shown. No script of the plugin ever runs
-  as root; only the listed `sudo` commands do
+- `bin/rc-run-steps` — the terminal side ("Run in terminal instead", and
+  interactive plans): lists the steps and exact commands, warns, asks *run
+  all / confirm each / cancel*, then runs each command with `bash -c` exactly
+  as shown — `sudo bash -c` for administrator steps. No script of the plugin
+  ever runs as root
 - `bin/rc-host-status` — unprivileged status snapshot (`key<TAB>value`);
   reads ufw's world-readable rule files, never the keyring
 - `bin/rc-vnc` — start/stop wayvnc as the transient user unit

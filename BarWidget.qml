@@ -39,8 +39,20 @@ Panel {
   property string formId: ""              // "" closed, "new", or a connection id
   property var formSeed: null             // prefill for "new" (e.g. from ~/.ssh/config)
   readonly property bool formOpen: formId !== ""
+  // Setup (the gear): everything the plugin installs, one place.
+  property bool setupOpen: false
+  // Form and Setup each take over the popup.
+  readonly property bool takeover: formOpen || setupOpen
+
+  function openSetup() {
+    closeForm()
+    connectTab.closeMenus()
+    setupView.reset()
+    setupOpen = true
+  }
 
   function openForm(id, seed) {
+    setupOpen = false
     connectTab.closeMenus()
     formSeed = seed || null
     formId = id || "new"
@@ -58,6 +70,7 @@ Panel {
 
   function showTab(name) {
     closeForm()
+    setupOpen = false
     connectTab.closeMenus()
     tab = name
   }
@@ -85,6 +98,7 @@ Panel {
       host.refresh()
     } else {
       closeForm()
+      setupOpen = false
       connectTab.reset()
       machineTab.reset()
     }
@@ -93,19 +107,31 @@ Panel {
   ConnectionStore {
     id: store
     watchSessions: root.opened
+    changes: changes
   }
 
   HostService {
     id: host
     store: store
+    changes: changes
     panelOpen: root.opened
+  }
+
+  // Reviews and applies privileged changes in its own centered window, so
+  // the popup gets out of the way while it's up.
+  ChangeSheet {
+    id: changes
+    okColor: root.okColor
+    warnColor: root.warnColor
+    fontFamily: root.fontFamily
+    onStageChanged: if (stage === "review" && root.opened) root.close()
   }
 
   // Re-probe while the Connect tab is showing.
   Timer {
     interval: 30000
     repeat: true
-    running: root.opened && root.tab === "connect" && !root.formOpen
+    running: root.opened && root.tab === "connect" && !root.takeover
     onTriggered: store.probeAll()
   }
 
@@ -172,18 +198,19 @@ Panel {
       anchors.fill: parent
       onCloseRequested: {
         if (root.formOpen) root.closeForm()
+        else if (root.setupOpen) root.setupOpen = false
         else if (!(root.tab === "connect" && connectTab.handleEscape())) root.close()
       }
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onMoveRequested: function(dx, dy) {
-        if (root.formOpen) return
+        if (root.takeover) return
         if (dx !== 0) root.showTab(dx > 0 ? "machine" : "connect")
         else if (root.tab === "connect") connectTab.moveCursor(dy)
       }
-      onActivateRequested: if (!root.formOpen && root.tab === "connect") connectTab.activateCursor()
-      onDeleteRequested: if (!root.formOpen && root.tab === "connect") connectTab.deleteCursor()
+      onActivateRequested: if (!root.takeover && root.tab === "connect") connectTab.activateCursor()
+      onDeleteRequested: if (!root.takeover && root.tab === "connect") connectTab.deleteCursor()
       onTextKey: function(t) {
-        if (root.formOpen) return
+        if (root.takeover) return
         if (t === "1") root.showTab("connect")
         else if (t === "2") root.showTab("machine")
         else if (t === "n" || t === "N") root.openForm("new", null)
@@ -204,16 +231,26 @@ Panel {
           width: parent.width
           spacing: Style.space(12)
 
-          // --- Header: title + what this machine currently exposes ---
+          // --- Header: title, what this machine exposes, the Setup gear ---
           Row {
             width: parent.width
             spacing: Style.space(8)
             visible: !root.formOpen
 
-            Text {
-              width: parent.width - statusPill.width - Style.space(8)
+            Pill {
+              visible: root.setupOpen
               anchors.verticalCenter: parent.verticalCenter
-              text: "Remote Connections"
+              text: "←"
+              tooltip: "Back (Esc)"
+              tint: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.setupOpen = false
+            }
+
+            Text {
+              width: parent.width - statusPill.width - gear.width - (root.setupOpen ? Style.space(52) : Style.space(16))
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.setupOpen ? "Setup" : "Remote Connections"
               color: root.foreground
               font.family: root.fontFamily
               font.pixelSize: Style.font.title
@@ -246,11 +283,50 @@ Panel {
                 onClicked: root.showTab("machine")
               }
             }
+
+            // Setup, with how many needed things are missing.
+            Item {
+              id: gear
+              visible: !root.setupOpen
+              anchors.verticalCenter: parent.verticalCenter
+              width: visible ? gearPill.width : 0
+              height: gearPill.height
+              Pill {
+                id: gearPill
+                iconText: "󰒓"
+                tooltip: store.neededMissing.length > 0
+                  ? "Setup · " + store.neededMissing.length + " needed thing(s) not installed"
+                  : "Setup · what the plugin installs"
+                tint: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.openSetup()
+              }
+              Rectangle {
+                visible: store.neededMissing.length > 0
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.rightMargin: -Style.space(4)
+                anchors.topMargin: -Style.space(4)
+                width: Math.max(height, badgeText.implicitWidth + Style.space(8))
+                height: badgeText.implicitHeight + Style.space(2)
+                radius: height / 2
+                color: root.warnColor
+                Text {
+                  id: badgeText
+                  anchors.centerIn: parent
+                  text: store.neededMissing.length
+                  color: Color.background
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  font.bold: true
+                }
+              }
+            }
           }
 
           // --- Tabs ---
           Rectangle {
-            visible: !root.formOpen
+            visible: !root.takeover
             width: parent.width
             height: tabRow.height + Style.space(6)
             radius: Style.cornerRadius
@@ -312,7 +388,7 @@ Panel {
           ConnectTab {
             id: connectTab
             width: parent.width
-            visible: root.tab === "connect" && !root.formOpen
+            visible: root.tab === "connect" && !root.takeover
             panel: root
             store: store
             flickable: flick
@@ -321,7 +397,16 @@ Panel {
           MachineTab {
             id: machineTab
             width: parent.width
-            visible: root.tab === "machine" && !root.formOpen
+            visible: root.tab === "machine" && !root.takeover
+            panel: root
+            store: store
+            host: host
+          }
+
+          SetupView {
+            id: setupView
+            width: parent.width
+            visible: root.setupOpen
             panel: root
             store: store
             host: host

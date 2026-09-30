@@ -1,15 +1,26 @@
 #!/bin/bash
 
 # Plan the system changes for one or more actions, without running anything.
-# Prints one step per line, `description<TAB>command`; the command is exactly
-# what bin/rc-run-steps shows to the user and then runs (through `bash -c`),
-# so what you read in the terminal is what executes. Lines starting with
-# `#after<TAB>` / `#undo<TAB>` summarize the result and how to reverse it.
+# Nothing here needs root: it only reads world-readable state and prints the
+# plan, one line per item:
+#
+#   <mode><TAB><description><TAB><command>   a step; mode is
+#       root         runs as administrator (the review sheet elevates the
+#                    whole batch once with pkexec; the terminal with sudo)
+#       user         runs as you
+#       interactive  needs a terminal (asks for a passphrase, a remote
+#                    password…), so it can only run in the terminal
+#   #after<TAB><text>      what's true once it ran
+#   #undo<TAB><text>       how to reverse it, in words
+#   #reverse<TAB><action>  the action (as rc-steps arguments) that reverses it
+#
+# The command is exactly what's shown and then run through `bash -c`.
 #
 #   rc-steps <action> [args...] [+ <action> [args...]]...
 #
 # Actions:
-#   install <package>...          omarchy pkg add ... (Omarchy's installer)
+#   install <package>...          omarchy pkg add ...
+#   remove <package>...           omarchy pkg drop ...
 #   ssh-enable lan|tailscale      start + enable sshd, open its port
 #   ssh-disable                   stop + disable sshd, close its port
 #   keys-on | keys-off            turn SSH password logins off / back on
@@ -36,18 +47,19 @@ LEGACY_DROPIN="/etc/ssh/sshd_config.d/90-omarchy-remote-connections.conf"
 PRIVATE_NETS="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fe80::/10 fc00::/7"
 # Overridable only so the parsing can be tested against sample rule files.
 UFW_DIR=${RC_UFW_DIR:-/etc/ufw}
+PKG_RE='^[a-z0-9][a-z0-9+._-]*$'
 
 die() {
   echo "$*" >&2
   exit 1
 }
 
-step() {
-  printf '%s\t%s\n' "$1" "$2"
-}
-
+root() { printf 'root\t%s\t%s\n' "$1" "$2"; }
+user() { printf 'user\t%s\t%s\n' "$1" "$2"; }
+interactive() { printf 'interactive\t%s\t%s\n' "$1" "$2"; }
 after() { printf '#after\t%s\n' "$1"; }
 undo() { printf '#undo\t%s\n' "$1"; }
+reverse() { printf '#reverse\t%s\n' "$*"; }
 
 ufw_enabled() {
   grep -qE '^ENABLED=yes' "$UFW_DIR/ufw.conf" 2>/dev/null
@@ -59,6 +71,14 @@ check_port() {
   if ! [[ $1 =~ ^[0-9]+$ ]] || (( $1 < 1 || $1 > 65535 )); then
     die "invalid port: $1"
   fi
+}
+
+check_packages() {
+  (( $# > 0 )) || die "no packages given"
+  local pkg
+  for pkg in "$@"; do
+    [[ $pkg =~ $PKG_RE ]] || die "invalid package name: $pkg"
+  done
 }
 
 # First Port sshd would use: drop-ins are included at the top of
@@ -85,14 +105,14 @@ close_steps() {
     case "$seen" in *" $key "*) continue ;; esac
     seen+="$key "
     if [[ $iface == in_tailscale0 ]]; then
-      step "Remove the firewall rule letting Tailscale reach port $port ($what)" \
-        "sudo ufw delete allow in on tailscale0 to any port $port proto tcp"
+      root "Remove the firewall rule letting Tailscale reach port $port ($what)" \
+        "ufw delete allow in on tailscale0 to any port $port proto tcp"
     elif [[ $src == any ]]; then
-      step "Remove the firewall rule opening port $port ($what) to every network" \
-        "sudo ufw delete allow $port/tcp"
+      root "Remove the firewall rule opening port $port ($what) to every network" \
+        "ufw delete allow $port/tcp"
     else
-      step "Remove the firewall rule opening port $port ($what) to $src" \
-        "sudo ufw delete allow from $src to any port $port proto tcp"
+      root "Remove the firewall rule opening port $port ($what) to $src" \
+        "ufw delete allow from $src to any port $port proto tcp"
     fi
   done < <(grep -h '^### tuple ###' "$UFW_DIR/user.rules" "$UFW_DIR/user6.rules" 2>/dev/null | grep -F "$comment")
 }
@@ -101,11 +121,11 @@ open_step() {
   local what=$1 scope=$2 port=$3
   ufw_enabled || return 0
   if [[ $scope == tailscale ]]; then
-    step "Let devices on your tailnet reach port $port ($what) through the firewall" \
-      "sudo ufw allow in on tailscale0 to any port $port proto tcp comment '$TAG $what'"
+    root "Let devices on your tailnet reach port $port ($what) through the firewall" \
+      "ufw allow in on tailscale0 to any port $port proto tcp comment '$TAG $what'"
   else
-    step "Open port $port ($what) to private networks only (home/office LANs; not the internet)" \
-      "for net in $PRIVATE_NETS; do sudo ufw allow from \$net to any port $port proto tcp comment '$TAG $what' || exit 1; done"
+    root "Open port $port ($what) to private networks only (home/office LANs, not the internet)" \
+      "for net in $PRIVATE_NETS; do ufw allow from \$net to any port $port proto tcp comment '$TAG $what' || exit 1; done"
   fi
 }
 
@@ -114,20 +134,25 @@ plan() {
   shift || true
   case "$action" in
     install)
-      (( $# > 0 )) || die "install: no packages given"
-      local pkg
-      for pkg in "$@"; do
-        [[ $pkg =~ ^[a-z0-9][a-z0-9+._-]*$ ]] || die "invalid package name: $pkg"
-      done
-      step "Install $* with Omarchy's package installer (it runs sudo pacman for whatever is missing)" "omarchy pkg add $*"
+      check_packages "$@"
+      root "Install $* with Omarchy's package installer (only what's missing)" "omarchy pkg add $*"
       after "$* installed"
-      undo "sudo pacman -Rns $*"
+      undo "Remove it again from Setup"
+      reverse remove "$@"
+      ;;
+
+    remove)
+      check_packages "$@"
+      root "Remove $* (and the dependencies nothing else uses)" "omarchy pkg drop $*"
+      after "$* removed; features that need it show Install again"
+      undo "Install it again from Setup"
+      reverse install "$@"
       ;;
 
     ssh-enable)
       local scope=${1:-}
       [[ $scope == lan || $scope == tailscale ]] || die "ssh-enable: scope must be lan or tailscale"
-      step "Start the SSH server now and at every boot" "sudo systemctl enable --now sshd.service"
+      root "Start the SSH server now and at every boot" "systemctl enable --now sshd.service"
       close_steps ssh
       open_step ssh "$scope" "$(ssh_port)"
       after "SSH server runs now and at every boot, on port $(ssh_port)"
@@ -138,15 +163,16 @@ plan() {
       else
         after "Devices on private networks (your LAN) can reach it; the internet can't"
       fi
-      if [[ -f $DROPIN ]]; then after "Only SSH keys can log in (Require keys is on)"; else after "Password logins are allowed"; fi
-      undo "Turn the SSH server off in the plugin; it runs the reverse commands the same way"
+      if [[ -f $DROPIN ]]; then after "Only SSH keys can log in (Require keys is on)"; else after "Password logins are allowed: add a key, then Require keys"; fi
+      undo "Turn the SSH server off; the reverse commands get the same review"
+      reverse ssh-disable
       ;;
 
     ssh-disable)
-      step "Stop the SSH server and don't start it at boot" "sudo systemctl disable --now sshd.service"
+      root "Stop the SSH server and don't start it at boot" "systemctl disable --now sshd.service"
       close_steps ssh
       after "Nobody can log in to this computer over SSH"
-      undo "Turn the SSH server on again in the plugin"
+      undo "Turn the SSH server on again"
       ;;
 
     keys-on)
@@ -155,31 +181,32 @@ plan() {
       # sshd -t/-T refuse to run without host keys, which only appear once
       # sshd has started for the first time.
       if [[ ! -e /etc/ssh/ssh_host_ed25519_key ]]; then
-        step "Create the SSH server's host keys (they don't exist yet)" "sudo ssh-keygen -A"
+        root "Create the SSH server's host keys (they don't exist yet)" "ssh-keygen -A"
       fi
-      step "Write an sshd drop-in that turns password logins off (read first, so no other file can turn them back on)" \
-        "printf '%s\\n' '# Managed by the Omarchy Remote Connections plugin (Require keys).' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' | sudo tee $DROPIN >/dev/null && sudo chmod 644 $DROPIN"
+      root "Write an sshd drop-in that turns password logins off (read first, so no other file can turn them back on)" \
+        "printf '%s\\n' '# Managed by the Omarchy Remote Connections plugin (Require keys).' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' > $DROPIN && chmod 644 $DROPIN"
       if [[ -e $LEGACY_DROPIN ]]; then
-        step "Remove the plugin's older drop-in" "sudo rm -f $LEGACY_DROPIN"
+        root "Remove the plugin's older drop-in" "rm -f $LEGACY_DROPIN"
       fi
-      step "Check the new sshd config, and remove the drop-in again if sshd rejects it" \
-        "sudo sshd -t || { sudo rm -f $DROPIN; exit 1; }"
-      step "Show what sshd will actually use (both should say no)" \
-        "sudo sshd -T | grep -Ei '^(passwordauthentication|kbdinteractiveauthentication) '"
+      root "Check the new sshd config, and remove the drop-in again if sshd rejects it" \
+        "sshd -t || { rm -f $DROPIN; exit 1; }"
+      root "Show what sshd will actually use (both should say no)" \
+        "sshd -T | grep -Ei '^(passwordauthentication|kbdinteractiveauthentication) '"
       if systemctl is-active --quiet sshd.service; then
-        step "Reload the running SSH server so the change applies" "sudo systemctl reload sshd.service"
+        root "Reload the running SSH server so the change applies" "systemctl reload sshd.service"
       fi
       after "Only the keys in ~/.ssh/authorized_keys can log in over SSH; passwords are refused"
-      undo "Turn Require keys off in the plugin (or: sudo rm $DROPIN)"
+      undo "Turn Require keys off (removes $DROPIN)"
+      reverse keys-off
       ;;
 
     keys-off)
-      step "Remove the drop-in, allowing password logins again" "sudo rm -f $DROPIN $LEGACY_DROPIN"
+      root "Remove the drop-in, allowing password logins again" "rm -f $DROPIN $LEGACY_DROPIN"
       if systemctl is-active --quiet sshd.service; then
-        step "Reload the running SSH server so the change applies" "sudo systemctl reload sshd.service"
+        root "Reload the running SSH server so the change applies" "systemctl reload sshd.service"
       fi
       after "Your account password works for SSH logins again"
-      undo "Turn Require keys on in the plugin"
+      undo "Turn Require keys on again"
       ;;
 
     vnc-firewall)
@@ -195,16 +222,16 @@ plan() {
         if [[ $scope == tailscale ]]; then
           after "Devices on your tailnet can reach screen sharing on port $2 (password required)"
         else
-          after "Devices on your local network can reach screen sharing on port $2 (password required)"
+          after "Devices on private networks (your LAN) can reach screen sharing on port $2 (password required); the internet can't"
         fi
-        undo "Turn screen sharing off in the plugin; it closes the port the same way"
+        undo "Turn screen sharing off; it closes the port the same way"
+        reverse vnc-firewall close
       fi
       ;;
 
     ssh-key-setup)
       # The key path stays a literal ~/…: it's shown to the user, and the
       # `bash -c` that runs the step expands it.
-      # shellcheck disable=SC2088
       local target=${1:-} port=${2:-} key="" candidate
       [[ $target =~ ^([A-Za-z0-9._-]+@)?[A-Za-z0-9._:-]+$ && $target != -* ]] \
         || die "ssh-key-setup: invalid target: $target"
@@ -219,10 +246,10 @@ plan() {
       if [[ -z $key ]]; then
         # shellcheck disable=SC2088
         key="~/.ssh/id_ed25519"
-        step "Create a new SSH key (it asks for an optional passphrase)" \
+        interactive "Create a new SSH key (it asks for an optional passphrase)" \
           "ssh-keygen -t ed25519 -f $key -C \"\$USER@\$(uname -n)\""
       fi
-      step "Copy your public key to $target (asks for its password once)" \
+      interactive "Copy your public key to $target (asks for its password once)" \
         "ssh-copy-id -i $key.pub${port:+ -p $port} $target"
       after "You log in to $target with your key ($key) instead of its password"
       undo "On $target, delete the line with your key from ~/.ssh/authorized_keys"
@@ -232,15 +259,15 @@ plan() {
       local pubkey=${1:-}
       # No quotes (the key is embedded in '…') and no control characters: a
       # newline would sneak in a second key, an escape sequence could redraw
-      # the confirmation screen.
+      # the review.
       [[ $pubkey != *[[:cntrl:]]* ]] || die "The key contains control characters (line breaks, escapes); paste just the one line."
       [[ $pubkey =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)\ [A-Za-z0-9+/]+=*(\ [^\']*)?$ ]] \
         || die "That doesn't look like an SSH public key (it should start with ssh-ed25519, ssh-rsa or ecdsa-…)."
       local label
       read -r _ _ label <<<"$pubkey"
       [[ -n $label ]] || label="this key"
-      step "Create ~/.ssh if needed, readable only by you" "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
-      step "Add the key ($label) to ~/.ssh/authorized_keys" \
+      user "Create ~/.ssh if needed, readable only by you" "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
+      user "Add the key ($label) to ~/.ssh/authorized_keys" \
         "printf '%s\\n' '$pubkey' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
       after "Whoever holds the private key for \"$label\" can log in to this computer over SSH"
       undo "Delete that line from ~/.ssh/authorized_keys"

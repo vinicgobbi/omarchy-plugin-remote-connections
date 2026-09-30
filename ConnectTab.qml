@@ -459,8 +459,8 @@ Column {
     visible: !tab.firstRun && store.missingPackages.length > 0
     width: parent.width
     iconText: "󰇚"
-    text: store.installBusy ? "Waiting for the terminal…" : "Install missing clients: " + store.missingPackages.join(", ")
-    tooltip: "Opens a terminal that shows the install command (omarchy pkg add) and asks before running it"
+    text: store.installBusy ? "Waiting for the review…" : "Install missing clients: " + store.missingPackages.join(", ")
+    tooltip: "Opens a review of the install command (omarchy pkg add) first"
     tint: panel.warnColor
     enabled: !store.installBusy
     fontFamily: panel.fontFamily
@@ -640,7 +640,7 @@ Column {
                     filled: true
                     tint: rowItem.missing ? panel.warnColor : panel.accent
                     text: rowItem.missing ? "Install " + Model.clientPackage(rowItem.conn.protocol) : "Connect ↵"
-                    tooltip: rowItem.missing ? "Opens a terminal that shows the install command first" : ""
+                    tooltip: rowItem.missing ? "Opens a review of the install command first" : ""
                     fontFamily: panel.fontFamily
                     onClicked: tab.primaryAction(rowItem.conn)
                   }
@@ -703,7 +703,7 @@ Column {
               visible: rowItem.conn.protocol === "ssh" && !rowItem.fromConfig && !rowItem.conn.jumpHost
               text: "Log in with a key"
               iconText: "󰌆"
-              tooltip: "Create a key if you have none and copy it to this server (ssh-keygen + ssh-copy-id, shown in a terminal first)"
+              tooltip: "Opens a terminal (it asks the server's password): ssh-keygen if you have no key, then ssh-copy-id"
               tint: panel.foreground
               enabled: !store.terminalBusy
               fontFamily: panel.fontFamily

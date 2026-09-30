@@ -89,21 +89,36 @@ computer** on and off:
 
 ### How system changes are made
 
-Anything that needs `sudo` — installing a client, turning the SSH server
-on/off, *Keys only*, opening/closing a firewall port — opens an **Omarchy
-floating terminal** that:
+Anything that needs administrator rights — installing or removing a
+package, turning the SSH server on/off, *Require keys*, opening/closing a
+firewall port — opens a **review sheet** in the middle of the screen (where
+Omarchy's password dialog appears):
 
-1. lists every step with the **exact command** it will run (the text you see
-   is what executes — no hidden helper runs as root);
-2. warns that these commands change your system and that you should **only
-   run them if you know what they do**;
-3. says what will be true **after** it runs and **how to undo** it;
-4. lets you **run all steps**, **confirm each step** (and skip any), or
-   **cancel** without changing anything.
+1. **What changes** and **how to undo it**, in plain words;
+2. the **exact commands** that will run, always visible — untick a step to
+   leave it out;
+3. a warning to **only apply them if you understand what they do**;
+4. **Authorize & apply**: Omarchy's own password dialog asks once, and every
+   ticked command runs exactly as shown, in one `pkexec` (no helper script of
+   the plugin runs as root). Each step shows its progress and output live;
+   you can hide the sheet and get a notification when it's done;
+5. if a step fails: its output, **Undo what ran**, **Retry** or **Try in
+   terminal**.
 
-`sudo` asks for your password in that terminal. Several changes at once
-(e.g. *Install missing clients* installs every client your saved
-connections need) show up as one list.
+Prefer to type it yourself? **Run in terminal instead** opens an Omarchy
+terminal with the same commands (run with `sudo`), and **Copy commands**
+puts them on the clipboard. Steps that need a terminal anyway — creating an
+SSH key, `ssh-copy-id` (which asks the server's password) — open there
+directly.
+
+### Setup
+
+The **gear** in the popup's header lists everything the plugin uses —
+the password keyring, the SSH/RDP/VNC clients, the screen-sharing server,
+the firewall, Tailscale — what each one is for, and whether it's
+installed. Install or remove one item, or tick several and **Install all
+missing** at once (one review, one password). The gear shows a number when
+something you need (e.g. the client for a saved connection) is missing.
 
 ## Install
 
@@ -143,14 +158,14 @@ never does them silently. Here's what to expect:
 
 | When | What happens | Why |
 |---|---|---|
-| First RDP or VNC connection | The row shows *Needs the 'freerdp' package* (or `tigervnc`); install opens the [command terminal](#how-system-changes-are-made) with the `omarchy pkg add` command, and **sudo** asks for your password | The plugin doesn't install anything without you seeing it |
+| First RDP or VNC connection | The row shows *Needs the 'freerdp' package* (or `tigervnc`); install (or the Setup gear) opens the [review sheet](#how-system-changes-are-made) with the `omarchy pkg add` command, and Omarchy's password dialog asks once | The plugin doesn't install anything without you seeing it |
 | Saving an RDP/VNC password | The GNOME keyring may ask you to **unlock** it | The password is stored in the keyring, not in `connections.json` |
 | Keyring locked when connecting | A notification says so, and the RDP/VNC client asks for the password itself | Nothing is stored anywhere else as a fallback |
 | First SSH connection to a host | The terminal asks you to confirm the host's **fingerprint** (`yes`) | Protection against man-in-the-middle; the plugin never turns it off |
 | First RDP connection to a host | The server certificate is trusted on first use (`/cert:tofu`); if it **changes** later, the connection is refused | Same idea as SSH host keys |
-| Turning the SSH server on/off, *Keys only*, or screen sharing beyond this computer | You pick the options in the popup, then the [command terminal](#how-system-changes-are-made) shows the exact commands; you choose to run them all, one by one, or cancel, and **sudo** asks for your password | Starting `sshd`, editing its config and changing firewall rules need root |
+| Turning the SSH server on/off, *Keys only*, or screen sharing beyond this computer | You pick the options in the popup, then the [review sheet](#how-system-changes-are-made) shows the exact commands; you apply them (untick any you don't want) and Omarchy's **password dialog** asks once | Starting `sshd`, editing its config and changing firewall rules need root |
 | Turning on *Keys only* | Needs at least one key in `~/.ssh/authorized_keys` first (run `ssh-copy-id you@this-machine` from the other computer) | Otherwise you'd lock yourself out |
-| First screen sharing | Install `wayvnc` (through the command terminal) and choose a **password** viewers must type | wayvnc always runs with authentication on |
+| First screen sharing | Install `wayvnc` (through the review sheet) and choose a **password** viewers must type | wayvnc always runs with authentication on |
 | Someone views your screen | The bar icon turns **red**; nothing hides it | You should always know when your screen is being watched |
 | Quick-connect shortcut | You add the keybinding line yourself (see [Keyboard shortcut](#keyboard-shortcut)) | The plugin doesn't edit your Hyprland config |
 | SSH login | SSH passwords aren't stored. Set up a key: `ssh-keygen`, then `ssh-copy-id user@host` | Keys are safer, and ssh-agent handles them for you |
@@ -177,10 +192,10 @@ save, so your file is never overwritten.
 What the plugin does to stay safe, and what it can't do for you:
 
 - **No hidden root.** Nothing of the plugin runs as root; the only
-  privileged commands are the `sudo …` lines the command terminal shows you,
-  run exactly as shown. Text shown there is stripped of terminal control
-  codes, and a step whose command contains any is refused, so the screen
-  can't be made to show something other than what runs.
+  privileged commands are the ones the review sheet shows you, run exactly
+  as shown in one `pkexec`. In the terminal path, text is stripped of
+  terminal control codes and a step whose command contains any is refused,
+  so the screen can't be made to show something other than what runs.
 - **Firewall scopes mean what they say.** *Local network* opens the port to
   private ranges only; *Tailscale only* to the `tailscale0` interface. The
   plugin only ever removes firewall rules carrying its own comment. If an

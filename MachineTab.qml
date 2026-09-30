@@ -325,7 +325,7 @@ Column {
           Text {
             width: parent.width
             text: !host.sshInstalled ? "openssh isn't installed"
-              : host.busy === "ssh" ? "Waiting for the terminal…"
+              : host.busy === "ssh" ? "Waiting for the review…"
               : host.sshActive ? "● On · " + (host.sshEnabled ? "starts at boot" : "until reboot") + " · port " + host.sshPort
               : "Off"
             elide: Text.ElideRight
@@ -360,7 +360,7 @@ Column {
         width: parent.width
         visible: text !== ""
         text: host.tailscaleIp === "" ? "Tailscale isn't connected, so \"Tailscale only\" isn't available."
-          : host.sshActive ? "Changing this opens the command terminal." : ""
+          : host.sshActive ? "Changing this opens a review of the firewall change." : ""
         wrapMode: Text.Wrap
         color: panel.dim
         font.family: panel.fontFamily
@@ -414,7 +414,7 @@ Column {
           // by hand is left alone.
           visible: host.sshKeysManaged || !host.sshKeysOnly
           text: host.sshKeysManaged ? "Allow passwords again" : "Require keys"
-          tooltip: host.authorizedKeys === 0 && !host.sshKeysManaged ? "Add a key first, or you'd lock yourself out" : "Opens the command terminal"
+          tooltip: host.authorizedKeys === 0 && !host.sshKeysManaged ? "Add a key first, or you'd lock yourself out" : "Opens a review of the exact commands first"
           enabled: host.busy === "" && (host.sshKeysManaged || host.authorizedKeys > 0)
           tint: panel.foreground
           fontFamily: panel.fontFamily
@@ -540,7 +540,7 @@ Column {
             visible: !host.wayvncInstalled
             anchors.centerIn: parent
             text: "Install"
-            tooltip: "Opens a terminal that shows the install command first"
+            tooltip: "Opens a review of the install command first"
             tint: panel.warnColor
             enabled: host.busy === ""
             fontFamily: panel.fontFamily
@@ -574,8 +574,8 @@ Column {
       Text {
         width: parent.width
         text: host.vncScope === "local" ? "Only through an SSH tunnel: ssh -L 5900:localhost:" + host.vncPort + " " + host.user + "@<this computer>"
-          : host.vncActive ? "Changing this restarts sharing (viewers reconnect)" + (host.ufwEnabled ? " and opens the command terminal for the firewall." : ".")
-          : (host.ufwEnabled ? "Turning it on opens the command terminal to open the firewall port." : "")
+          : host.vncActive ? "Changing this restarts sharing (viewers reconnect)" + (host.ufwEnabled ? " and opens a review of the firewall change." : ".")
+          : (host.ufwEnabled ? "Turning it on opens a review of the firewall change." : "")
         visible: text !== "" && host.wayvncInstalled
         wrapMode: Text.Wrap
         color: panel.dim
@@ -759,7 +759,7 @@ Column {
 
   Text {
     width: parent.width
-    text: "󰆍  Changes that need sudo open a terminal listing every command before anything runs. Turning screen sharing off is instant."
+    text: "󰒃  Changes that need administrator rights open a review with the exact commands first; Omarchy asks for your password once. Turning screen sharing off is instant."
     wrapMode: Text.Wrap
     color: panel.dim
     font.family: panel.fontFamily

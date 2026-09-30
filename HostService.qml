@@ -3,15 +3,17 @@ import Quickshell
 import Quickshell.Io
 
 // "This machine": state of the SSH server and screen sharing (wayvnc), and
-// the actions that change them. Anything that needs sudo or installs a
-// package opens an Omarchy terminal (bin/rc-terminal) that shows the exact
-// commands and only runs them once the user confirms there; screen sharing
-// itself runs as the user (bin/rc-vnc). Jobs run one at a time.
+// the actions that change them. Anything that needs administrator rights
+// goes through the review sheet (ChangeSheet.qml: exact commands, one
+// password, live progress); screen sharing itself runs as the user
+// (bin/rc-vnc). Jobs run one at a time.
 Item {
   id: root
 
   // ConnectionStore, for keyring access (the screen-sharing password).
   property var store: null
+  // ChangeSheet that reviews and applies privileged changes.
+  property var changes: null
   property bool panelOpen: false
 
   readonly property string stateDir: (Quickshell.env("XDG_CONFIG_HOME") || (Quickshell.env("HOME") + "/.config")) + "/omarchy/remote-connections"
@@ -77,20 +79,35 @@ Item {
     _jobs = _jobs.slice(1)
     busy = job.label
     _inFlight = true
+    if (job.command && job.command.review) {
+      // A privileged change: the review sheet runs it (or hands it to the
+      // terminal) and reports back with the same codes as bin/rc-terminal.
+      if (!changes) { _jobDone(job.done, false, 1, "The review sheet isn't available.") ; return }
+      changes.request(job.command.title, job.command.args, function(ok, code, message) {
+        root._jobDone(job.done, ok, code, message)
+      })
+      return
+    }
     jobProcess.done = job.done
     jobProcess.command = job.command
     jobProcess.running = true
   }
 
-  // Runs `args` (see bin/rc-steps) in a terminal that shows the commands
-  // and asks before running them.
-  function inTerminal(title, args) {
-    return [bundledPath("bin/rc-terminal"), title].concat(args)
+  function _jobDone(cb, ok, code, message) {
+    if (cb) cb(ok, code, message || "")
+    _inFlight = false
+    Qt.callLater(_next)
   }
 
-  // Exit codes from bin/rc-terminal.
+  // A change reviewed in the sheet before it runs (see bin/rc-steps for args).
+  function review(title, args) {
+    return { review: true, title: title, args: args }
+  }
+
+  // Codes from the sheet / bin/rc-terminal. Canceling isn't an error: the
+  // user chose not to apply it.
   function describeFailure(exitCode, errText, what) {
-    if (exitCode === 2) return what + " was canceled in the terminal; nothing was changed."
+    if (exitCode === 2) return ""
     if (exitCode === 3) return what + ": the terminal was closed before it finished. Check the state below."
     if (exitCode === 4) return what + " finished with some steps skipped."
     return errText !== "" ? errText : what + " failed (exit code " + exitCode + ")."
@@ -112,13 +129,13 @@ Item {
     lastError = ""
     sshScope = scope === "tailscale" ? "tailscale" : "lan"
     savePrefs()
-    run("ssh", inTerminal("Turn on the SSH server", ["ssh-enable", sshScope]), function(ok, code, err) {
+    run("ssh", review("Turn on the SSH server", ["ssh-enable", sshScope]), function(ok, code, err) {
       if (!ok) lastError = describeFailure(code, err, "Turning on the SSH server")
     })
   }
 
   // Picking who can connect: remembered for next time while SSH is off,
-  // applied right away (through the terminal) while it's on.
+  // applied right away (through the review sheet) while it's on.
   function chooseSshScope(scope) {
     if (scope !== "lan" && scope !== "tailscale") return
     if (sshActive && (scope !== sshFirewall || sshFirewall === "any") && ufwEnabled) {
@@ -129,24 +146,24 @@ Item {
     }
   }
 
-  // Adds a public key to ~/.ssh/authorized_keys, through the terminal.
+  // Adds a public key to ~/.ssh/authorized_keys (reviewed; runs as you).
   function authorizeKey(pubkey) {
     lastError = ""
-    run("keys", inTerminal("Allow a key to log in", ["authorize-key", String(pubkey).trim()]), function(ok, code, err) {
+    run("keys", review("Allow a key to log in", ["authorize-key", String(pubkey).trim()]), function(ok, code, err) {
       if (!ok) lastError = describeFailure(code, err, "Adding the key")
     })
   }
 
   function disableSsh() {
     lastError = ""
-    run("ssh", inTerminal("Turn off the SSH server", ["ssh-disable"]), function(ok, code, err) {
+    run("ssh", review("Turn off the SSH server", ["ssh-disable"]), function(ok, code, err) {
       if (!ok) lastError = describeFailure(code, err, "Turning off the SSH server")
     })
   }
 
   function setKeysOnly(on) {
     lastError = ""
-    run("keys", inTerminal(on ? "SSH: keys only" : "SSH: allow passwords again", [on ? "keys-on" : "keys-off"]), function(ok, code, err) {
+    run("keys", review(on ? "Require SSH keys" : "Allow SSH passwords again", [on ? "keys-on" : "keys-off"]), function(ok, code, err) {
       if (!ok) lastError = describeFailure(code, err, "Changing password logins")
     })
   }
@@ -185,26 +202,28 @@ Item {
       // drop any rule for another scope). If that's canceled, don't leave a
       // server running that the user thinks is unreachable.
       if (scope === "local") {
-        if (vncFirewall !== "none") run("vnc", inTerminal("Close the old screen-sharing port", ["vnc-firewall", "close"]), null)
+        if (vncFirewall !== "none") run("vnc", review("Close the old screen-sharing port", ["vnc-firewall", "close"]), null)
         return
       }
       if (!ufwEnabled) return
-      run("vnc", inTerminal("Open the firewall for screen sharing", ["vnc-firewall", scope, port]), function(fwOk, fwCode, fwErr) {
+      run("vnc", review("Open the firewall for screen sharing", ["vnc-firewall", scope, port]), function(fwOk, fwCode, fwErr) {
         if (fwOk) return
-        lastError = describeFailure(fwCode, fwErr, "Opening the firewall for screen sharing") + " Screen sharing was stopped."
+        lastError = fwCode === 2
+          ? "Screen sharing was stopped: the firewall change was canceled, so nobody could have reached it."
+          : describeFailure(fwCode, fwErr, "Opening the firewall for screen sharing") + " Screen sharing was stopped."
         run("vnc", [bundledPath("bin/rc-vnc"), "stop"], null)
       })
     })
   }
 
-  // Stopping is immediate (no terminal): only closing the firewall port,
-  // if one was opened, goes through the terminal afterwards.
+  // Stopping is immediate: only closing the firewall port, if one was
+  // opened, goes through the review sheet afterwards.
   function stopVnc() {
     lastError = ""
     run("vnc", [bundledPath("bin/rc-vnc"), "stop"], null)
     if (vncFirewall !== "none")
-      run("vnc", inTerminal("Close the screen-sharing port", ["vnc-firewall", "close"]), function(ok, code, err) {
-        if (!ok) lastError = describeFailure(code, err, "Closing the screen-sharing firewall port") + " The port stays open, but nothing is listening on it."
+      run("vnc", review("Close the screen-sharing port", ["vnc-firewall", "close"]), function(ok, code, err) {
+        if (!ok) lastError = "Screen sharing is off. " + (code === 2 ? "The firewall port was left open (canceled), but nothing is listening on it." : describeFailure(code, err, "Closing its firewall port"))
       })
   }
 
@@ -233,7 +252,7 @@ Item {
 
   function installPackage(pkg) {
     lastError = ""
-    run("install", inTerminal("Install " + pkg, ["install", pkg]), function(ok, code, err) {
+    run("install", review("Install " + pkg, ["install", pkg]), function(ok, code, err) {
       if (!ok) lastError = describeFailure(code, err, "Installing " + pkg)
     })
   }
@@ -325,9 +344,7 @@ Item {
       done = null
       // Callbacks may queue follow-up jobs; those start after this one is
       // fully done, never alongside it.
-      if (cb) cb(exitCode === 0, exitCode, String(jobErr.text || "").trim())
-      root._inFlight = false
-      Qt.callLater(root._next)
+      root._jobDone(cb, exitCode === 0, exitCode, String(jobErr.text || "").trim())
     }
   }
 }

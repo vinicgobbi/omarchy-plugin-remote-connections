@@ -96,6 +96,13 @@ Item {
 
   ConnectionStore {
     id: store
+    changes: changes
+  }
+
+  // Installing a missing client from here goes through the same review.
+  ChangeSheet {
+    id: changes
+    fontFamily: root.fontFamily
   }
 
   PanelWindow {

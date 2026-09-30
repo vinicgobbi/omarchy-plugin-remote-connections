@@ -145,9 +145,34 @@ Item {
     return out
   }
 
-  // A terminal from bin/rc-terminal is open (install, key setup…).
-  readonly property bool terminalBusy: terminalProcess.running
+  // ChangeSheet that reviews and applies installs/removals (and hands
+  // interactive steps like ssh-copy-id to the terminal).
+  property var changes: null
+  readonly property bool terminalBusy: terminalProcess.running || (changes !== null && changes.busy)
   readonly property bool installBusy: terminalBusy
+
+  // Everything the Setup view manages, and whether it's installed
+  // (bin/rc-packages): { libsecret: true, tigervnc: false, … }.
+  readonly property var managedPackages: ["libsecret", "openssh", "freerdp", "tigervnc", "wayvnc", "ufw", "tailscale"]
+  property var packages: ({})
+  property bool packagesChecked: false
+
+  // How many saved connections use each protocol.
+  readonly property var protocolUse: {
+    var out = { ssh: 0, rdp: 0, vnc: 0 }
+    for (var i = 0; i < connections.length; i++) out[connections[i].protocol] = (out[connections[i].protocol] || 0) + 1
+    return out
+  }
+
+  // Missing packages that matter now: always-needed ones, plus the client
+  // of any protocol a saved connection uses. Drives the gear's badge.
+  readonly property var neededMissing: {
+    if (!packagesChecked) return []
+    var needed = ["libsecret", "openssh"]
+    if (protocolUse.rdp > 0) needed.push("freerdp")
+    if (protocolUse.vnc > 0) needed.push("tigervnc")
+    return needed.filter(function(p) { return packages[p] === false })
+  }
 
   function installClient(protocol) {
     installPackages([Model.clientPackage(protocol)])
@@ -155,10 +180,27 @@ Item {
 
   // Opens a terminal showing the install command (omarchy pkg add) and asking before it runs
   // (bin/rc-terminal); re-checks the clients once it's closed.
-  function installPackages(pkgs) {
+  function installPackages(pkgs, done) {
     var list = (pkgs || []).filter(function(p) { return p !== "" })
     if (list.length === 0) return
-    runInTerminal("Install " + list.join(", "), ["install"].concat(list))
+    reviewChange("Install " + list.join(", "), ["install"].concat(list), done)
+  }
+
+  function removePackages(pkgs, done) {
+    var list = (pkgs || []).filter(function(p) { return p !== "" })
+    if (list.length === 0) return
+    reviewChange("Remove " + list.join(", "), ["remove"].concat(list), done)
+  }
+
+  // Through the review sheet when there is one, else the terminal.
+  function reviewChange(title, args, done) {
+    lastError = ""
+    if (!changes) { runInTerminal(title, args); return }
+    changes.request(title, args, function(ok, code, message) {
+      if (!ok && code !== 2 && message) root.lastError = message
+      root.refresh()
+      if (done) done(ok, code, message)
+    })
   }
 
   // Create an SSH key if there's none and copy it to the connection's
@@ -168,7 +210,7 @@ Item {
     var target = (c.user ? c.user + "@" : "") + c.host
     var args = ["ssh-key-setup", target]
     if (c.port && c.port !== 22) args.push(String(c.port))
-    runInTerminal("Log in to " + c.name + " with a key", args)
+    reviewChange("Log in to " + c.name + " with a key", args, null)
   }
 
   // Opens the command terminal (bin/rc-terminal) for `args`; re-checks
@@ -218,6 +260,7 @@ Item {
     clientCheck.running = true
     sshHostsProcess.running = true
     sshKeysProcess.running = true
+    if (!packagesProcess.running) packagesProcess.running = true
   }
 
   // Probe every saved connection and ~/.ssh/config host that can be checked
@@ -325,6 +368,23 @@ Item {
     onExited: function(exitCode) {
       if (exitCode === 1) root.lastError = String(terminalErr.text || "").trim() || "It failed in the terminal."
       root.refresh()
+    }
+  }
+
+  Process {
+    id: packagesProcess
+    running: false
+    command: [root.bundledPath("bin/rc-packages")].concat(root.managedPackages)
+    stdout: StdioCollector { id: packagesOut; waitForEnd: true }
+    onExited: function(exitCode) {
+      if (exitCode !== 0) return
+      var next = {}
+      String(packagesOut.text || "").split("\n").forEach(function(l) {
+        var f = l.split("\t")
+        if (f.length === 2) next[f[0]] = f[1] === "yes"
+      })
+      root.packages = next
+      root.packagesChecked = true
     }
   }
 

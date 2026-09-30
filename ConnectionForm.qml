@@ -382,7 +382,7 @@ Column {
       Pill {
         text: store.sshKeys.length === 0 ? "Create a key and copy it to this server" : "Copy my key to this server"
         iconText: "󰌆"
-        tooltip: "Opens a terminal: ssh-keygen (only if you have no key) and ssh-copy-id, shown before they run"
+        tooltip: "Opens a terminal (it asks the server's password): ssh-keygen if you have no key, then ssh-copy-id"
         tint: panel.foreground
         enabled: form.dHost.trim() !== "" && !store.terminalBusy
         fontFamily: panel.fontFamily

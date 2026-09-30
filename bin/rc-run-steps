@@ -1,6 +1,8 @@
 #!/bin/bash
 
-# Runs inside an Omarchy floating terminal (opened by bin/rc-terminal).
+# Runs inside an Omarchy floating terminal (opened by bin/rc-terminal): the
+# "Run in terminal instead" path of the review sheet, and the only path for
+# interactive steps (ssh-keygen, ssh-copy-id).
 # Shows every command it's about to run, warns, and only proceeds once you
 # choose to — all at once or one step at a time. The commands shown are
 # exactly the ones executed.
@@ -64,19 +66,27 @@ confirm() {
 }
 
 mapfile -t plan < <("$here/rc-steps" "$@" 2>"$run_dir/run-$token.err")
-steps=()
+# Steps are "mode<TAB>description<TAB>command" (see bin/rc-steps).
+modes=()
+descs=()
+cmds=()
 afters=()
 undos=()
 uses_sudo=false
 unsafe=false
 for line in "${plan[@]}"; do
-  [[ ${line#*$'\t'} == *[[:cntrl:]]* ]] && unsafe=true
+  # Tabs only separate the fields; anything else is refused.
+  [[ ${line//$'\t'/} == *[[:cntrl:]]* ]] && unsafe=true
   case "$line" in
     "#after"$'\t'*) afters+=("${line#*$'\t'}") ;;
     "#undo"$'\t'*) undos+=("${line#*$'\t'}") ;;
+    "#"*) ;;
     *)
-      steps+=("$line")
-      [[ ${line#*$'\t'} == *sudo\ * ]] && uses_sudo=true
+      IFS=$'\t' read -r mode desc cmd <<<"$line"
+      modes+=("$mode")
+      descs+=("$desc")
+      cmds+=("$cmd")
+      [[ $mode == root ]] && uses_sudo=true
       ;;
   esac
 done
@@ -90,7 +100,7 @@ if [[ -s $run_dir/run-$token.err ]]; then
   close_prompt
   exit 1
 fi
-if (( ${#steps[@]} == 0 )); then
+if (( ${#cmds[@]} == 0 )); then
   style --bold "Nothing to change — this machine is already set up that way."
   write_result ok
   close_prompt
@@ -112,17 +122,16 @@ if (( ${#undos[@]} > 0 )); then
 fi
 style --bold "Commands (run exactly as shown)"
 echo
-i=0
-for s in "${steps[@]}"; do
-  i=$((i + 1))
-  style --bold "$i. $(plain "${s%%$'\t'*}")"
-  style --foreground 6 --padding "0 3" "\$ ${s#*$'\t'}"
+for i in "${!cmds[@]}"; do
+  if [[ ${modes[$i]} == root ]]; then who=" · as administrator (sudo)"; else who=""; fi
+  style --bold "$((i + 1)). $(plain "${descs[$i]}")$who"
+  style --foreground 6 --padding "0 3" "\$ ${cmds[$i]}"
 done
 echo
 if $uses_sudo; then
   warning="⚠  These commands change your system (services, firewall, packages).
-Only run them if you know what they do. Commands starting with sudo
-will ask for your password."
+Only run them if you know what they do. Steps marked \"as administrator\"
+run with sudo, which asks for your password."
 else
   warning="⚠  These commands change files on this computer or on the server
 you named. Only run them if you know what they do."
@@ -147,20 +156,25 @@ if [[ $choice == Cancel ]]; then
 fi
 
 skipped=0
-i=0
-for s in "${steps[@]}"; do
-  i=$((i + 1))
-  desc=$(plain "${s%%$'\t'*}")
-  cmd=${s#*$'\t'}
+total=${#cmds[@]}
+for idx in "${!cmds[@]}"; do
+  i=$((idx + 1))
+  desc=$(plain "${descs[$idx]}")
+  cmd=${cmds[$idx]}
   echo
-  style --bold "$i/${#steps[@]} · $desc"
+  style --bold "$i/$total · $desc"
   if [[ $choice == "Confirm each step" ]] && ! confirm "Run: $cmd"; then
     style --foreground 3 "   skipped"
     skipped=$((skipped + 1))
     continue
   fi
   style --foreground 6 "\$ $cmd"
-  if ! bash -c "$cmd"; then
+  if [[ ${modes[$idx]} == root ]]; then
+    runner=(sudo bash -c "$cmd")
+  else
+    runner=(bash -c "$cmd")
+  fi
+  if ! "${runner[@]}"; then
     style --foreground 1 --bold "Step $i failed. The steps after it were not run."
     write_result "failed	Step $i failed: $desc"
     close_prompt
