@@ -18,6 +18,9 @@ Item {
 
   property bool opened: false
   property string filterText: ""
+  // RDP connection waiting for its password (see store.needsPassword).
+  property var passwordConn: null
+  property bool rememberPassword: true
   property int selectedIndex: 0
 
   readonly property var protocolIcons: ({ ssh: "󰆍", rdp: "󰍹", vnc: "󰢹" })
@@ -43,7 +46,24 @@ Item {
   property int cardWidth: Math.min(Style.space(520), panel.width - Style.gapsOut * 2)
   property int cardHeight: Math.min(Style.space(460), panel.height - Style.gapsOut * 2)
 
+  function cancelPassword() {
+    root.passwordConn = null
+    pwField.text = ""
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  function submitPassword() {
+    var c = root.passwordConn
+    if (!c || pwField.text === "") return
+    var pw = pwField.text
+    pwField.text = ""
+    root.passwordConn = null
+    root.dismiss()
+    store.connectWithPassword(c.id, c.user, pw, root.rememberPassword, null)
+  }
+
   function open(payloadJson) {
+    root.passwordConn = null
     root.opened = true
     root.filterText = ""
     root.selectedIndex = 0
@@ -89,6 +109,12 @@ Item {
   function activate(index) {
     var c = root.results[index]
     if (!c) return
+    if (!clientMissing(c) && store.needsPassword(c)) {
+      root.rememberPassword = true
+      root.passwordConn = c
+      Qt.callLater(function() { pwField.forceActiveFocus() })
+      return
+    }
     root.dismiss()
     if (clientMissing(c)) store.installClient(c.protocol)
     else store.connect(c.id)
@@ -193,16 +219,54 @@ Item {
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            text: root.filterText || "Connect to…"
+            text: root.passwordConn ? "Password for " + root.passwordConn.name : (root.filterText || "Connect to…")
             color: root.foreground
-            opacity: root.filterText ? 1 : 0.58
+            opacity: root.filterText || root.passwordConn ? 1 : 0.58
             font.family: root.fontFamily
             font.pixelSize: Style.font.heading
             elide: Text.ElideRight
           }
         }
 
+        // Password for an RDP connection with none saved.
+        Column {
+          id: pwBox
+          visible: root.passwordConn !== null
+          width: parent.width
+          spacing: Style.space(8)
+          Text {
+            width: parent.width
+            text: root.passwordConn ? Model.subtitle(root.passwordConn) : ""
+            textFormat: Text.PlainText
+            elide: Text.ElideRight
+            color: root.dim
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+          TextField {
+            id: pwField
+            width: parent.width
+            password: true
+            placeholderText: "Password"
+            foreground: root.foreground
+            accent: Color.accent
+            onAccepted: root.submitPassword()
+            Keys.onEscapePressed: root.cancelPassword()
+          }
+          Toggle {
+            width: parent.width
+            label: "Remember in keyring"
+            description: root.rememberPassword ? "Next time it connects without asking." : "Used once, then deleted."
+            checked: root.rememberPassword
+            foreground: root.foreground
+            accent: Color.accent
+            fontFamily: root.fontFamily
+            onClicked: root.rememberPassword = !root.rememberPassword
+          }
+        }
+
         Item {
+          visible: root.passwordConn === null
           width: parent.width
           height: parent.height - root.headerHeight - hint.height - root.contentSpacing * 2
 
@@ -324,7 +388,7 @@ Item {
         Text {
           id: hint
           width: parent.width
-          text: "Enter connect · ↑↓ select · Esc close"
+          text: root.passwordConn ? "Enter connect · Esc back" : "Enter connect · ↑↓ select · Esc close"
           color: root.dim
           horizontalAlignment: Text.AlignHCenter
           font.family: root.fontFamily

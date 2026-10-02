@@ -103,6 +103,11 @@ case "$action" in
     } >"$config"
     unset password
 
+    # A socket left by an earlier run would look like this one already being
+    # up (and the config would be deleted before wayvnc read it).
+    rm -f "$socket"
+    since=$(date '+%Y-%m-%d %H:%M:%S')
+
     systemd-run --user --quiet --collect --unit="$UNIT" \
       --description="Omarchy Remote Connections: screen sharing (wayvnc)" \
       --setenv=WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-wayland-1}" \
@@ -110,17 +115,24 @@ case "$action" in
       wayvnc --config="$config" --socket="$socket" --render-cursor "${input_flag[@]}" \
       || { rm -f "$config"; die "Couldn't start wayvnc"; }
 
-    # Give wayvnc time to read the config (and fail fast on a bad one), then
-    # drop the password from disk.
-    for _ in 1 2 3 4 5 6 7 8 9 10; do
-      [[ -S $socket ]] && break
+    # It's up only once it listens on the port: by then it has read the
+    # config, so the password can leave the disk. If it exits first, report
+    # why instead of claiming success.
+    listening=false
+    for _ in $(seq 1 40); do
       systemctl --user is-active --quiet "$UNIT.service" || break
-      sleep 0.3
+      if ss -ltnpH "sport = :$port" 2>/dev/null | grep -q "\"wayvnc\""; then
+        listening=true
+        break
+      fi
+      sleep 0.25
     done
     rm -f "$config"
-    if ! systemctl --user is-active --quiet "$UNIT.service"; then
-      journalctl --user -u "$UNIT.service" -n 5 --no-pager -o cat >&2 2>/dev/null
-      die "wayvnc stopped right after starting."
+    if ! $listening; then
+      systemctl --user stop "$UNIT.service" >/dev/null 2>&1 || true
+      reason=$(journalctl --user -u "$UNIT.service" --since "$since" --no-pager -o cat 2>/dev/null \
+        | grep -iE 'error|fail|unable|cannot|could not' | grep -v 'Failed with result' | tail -n 2)
+      die "Screen sharing didn't start${reason:+: $reason}"
     fi
     ;;
 

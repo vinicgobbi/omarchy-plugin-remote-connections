@@ -205,9 +205,11 @@ function allClientBinaries() {
 }
 
 // What gets handed to bin/rc-connect: the connection minus bookkeeping, so
-// the script never sees anything it doesn't need. Never contains a secret.
-function connectPayload(c) {
+// the script never sees anything it doesn't need. Never contains a secret;
+// oncePassword only says one is waiting in the keyring for this connection.
+function connectPayload(c, oncePassword) {
   return JSON.stringify({
+    oncePassword: oncePassword === true,
     id: c.id,
     name: c.name,
     protocol: c.protocol,

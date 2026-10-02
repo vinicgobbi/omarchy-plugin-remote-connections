@@ -23,6 +23,9 @@ Column {
   property string hoveredId: ""
   property string menuId: ""             // row whose ⋯ actions are open
   property string pendingDeleteId: ""
+  // RDP connection asking for its password inline before connecting.
+  property string passwordFor: ""
+  property bool rememberPassword: true
   property string copiedId: ""
   property real now: Date.now()
 
@@ -51,6 +54,7 @@ Column {
   function closeMenus() {
     menuId = ""
     pendingDeleteId = ""
+    passwordFor = ""
     selectedId = ""
     hoveredId = ""
   }
@@ -63,6 +67,7 @@ Column {
   // Esc peels one layer at a time; returns false when there's nothing left
   // to close so the popup itself closes.
   function handleEscape() {
+    if (passwordFor !== "") { passwordFor = ""; return true }
     if (pendingDeleteId !== "") { pendingDeleteId = ""; return true }
     if (menuId !== "") { menuId = ""; return true }
     if (query !== "" || protoFilter !== "") { searchField.text = ""; protoFilter = ""; return true }
@@ -120,9 +125,23 @@ Column {
     if (clientMissing(c)) {
       store.installClient(c.protocol)
       panel.close()
+    } else if (store.needsPassword(c)) {
+      menuId = ""
+      pendingDeleteId = ""
+      rememberPassword = true
+      passwordFor = c.id
     } else if (store.connect(c.id)) {
       panel.close()
     }
+  }
+
+  function connectWithPassword(c, user, password) {
+    if (password === "") return
+    var id = c.id
+    passwordFor = ""
+    store.connectWithPassword(id, user, password, rememberPassword, function(ok) {
+      if (ok) panel.close()
+    })
   }
 
   function copyAddress(c) {
@@ -509,7 +528,8 @@ Column {
           readonly property bool menuOpen: tab.menuId === conn.id
           // The actions stay on screen while this row's menu is open, so its
           // ✕ can always close it.
-          readonly property bool showActions: isSelected || menuOpen
+          readonly property bool askingPassword: tab.passwordFor === conn.id
+          readonly property bool showActions: isSelected || menuOpen || askingPassword
           readonly property bool missing: tab.clientMissing(conn)
           width: section.width
           spacing: Style.space(4)
@@ -526,7 +546,7 @@ Column {
               onHoveredChanged: {
                 if (hovered) {
                   // While a menu is open, other rows don't light up.
-                  if (tab.menuId !== "" && !rowItem.menuOpen) return
+                  if ((tab.menuId !== "" && !rowItem.menuOpen) || (tab.passwordFor !== "" && !rowItem.askingPassword)) return
                   tab.hoveredId = rowItem.conn.id
                   tab.selectedId = ""
                 } else if (tab.hoveredId === rowItem.conn.id) {
@@ -723,6 +743,75 @@ Column {
               onClicked: {
                 tab.menuId = ""
                 tab.pendingDeleteId = rowItem.conn.id
+              }
+            }
+          }
+
+          // Password prompt (RDP with no saved password)
+          Column {
+            visible: tab.passwordFor === rowItem.conn.id
+            width: parent.width
+            leftPadding: Style.space(48)
+            spacing: Style.space(6)
+            onVisibleChanged: {
+              if (!visible) { pwField.text = ""; return }
+              pwUser.text = rowItem.conn.user
+              Qt.callLater(function() { (rowItem.conn.user === "" ? pwUser : pwField).forceActiveFocus() })
+            }
+
+            Text {
+              width: parent.width - Style.space(48)
+              text: "Sign in to " + rowItem.conn.host + (rowItem.conn.rdp && rowItem.conn.rdp.domain ? " (domain " + rowItem.conn.rdp.domain + ")" : "")
+              textFormat: Text.PlainText
+              wrapMode: Text.Wrap
+              color: panel.foreground
+              font.family: panel.fontFamily
+              font.pixelSize: Style.font.caption
+            }
+            TextField {
+              id: pwUser
+              width: parent.width - Style.space(48)
+              placeholderText: "User"
+              foreground: panel.foreground
+              accent: panel.accent
+              onAccepted: pwField.forceActiveFocus()
+              Keys.onEscapePressed: tab.passwordFor = ""
+            }
+            TextField {
+              id: pwField
+              width: parent.width - Style.space(48)
+              placeholderText: "Password"
+              password: true
+              foreground: panel.foreground
+              accent: panel.accent
+              onAccepted: tab.connectWithPassword(rowItem.conn, pwUser.text, text)
+              Keys.onEscapePressed: tab.passwordFor = ""
+            }
+            Toggle {
+              width: parent.width - Style.space(48)
+              label: "Remember in keyring"
+              description: tab.rememberPassword ? "Next time it connects without asking." : "Used once, then deleted."
+              checked: tab.rememberPassword
+              foreground: panel.foreground
+              accent: panel.accent
+              fontFamily: panel.fontFamily
+              onClicked: tab.rememberPassword = !tab.rememberPassword
+            }
+            Row {
+              spacing: Style.space(6)
+              Pill {
+                text: "Cancel"
+                tint: panel.foreground
+                fontFamily: panel.fontFamily
+                onClicked: tab.passwordFor = ""
+              }
+              Pill {
+                text: "Connect ↵"
+                filled: true
+                tint: panel.accent
+                enabled: pwField.text !== ""
+                fontFamily: panel.fontFamily
+                onClicked: tab.connectWithPassword(rowItem.conn, pwUser.text, pwField.text)
               }
             }
           }

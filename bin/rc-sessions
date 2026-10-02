@@ -36,7 +36,7 @@ case "${1:-list}" in
   list)
     [[ -d $dir ]] || exit 0
     for file in "$dir"/*; do
-      [[ -f $file ]] || continue
+      [[ -f $file && $file != *.stopping ]] || continue
       id=${file##*/}
       if live_pid "$id" >/dev/null; then
         printf '%s\t%s\n' "$id" "$(<"$file")"
@@ -50,6 +50,8 @@ case "${1:-list}" in
     id=${2:-}
     valid_id "$id" || { echo "invalid session id" >&2; exit 2; }
     pid=$(live_pid "$id") || exit 0
+    # Tells bin/rc-connect this exit was asked for, not an error.
+    : >"$dir/$id.stopping"
     kill -TERM "$pid"
     ;;
 

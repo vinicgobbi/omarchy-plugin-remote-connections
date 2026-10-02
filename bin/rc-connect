@@ -65,11 +65,18 @@ done
 [[ $user != -* ]] || fail "User can't start with '-'"
 
 password=""
-if [[ $has_secret == "true" && $protocol != "ssh" ]]; then
+if [[ $(field .oncePassword) == "true" && $protocol != "ssh" ]]; then
+  # Typed in the popup for this connection only ("Remember" unticked): it
+  # waited in the keyring under a one-time id; read it, then drop it.
+  password=$("$here/rc-secret" get "once-$id" 2>/dev/null) || password=""
+  "$here/rc-secret" clear "once-$id" >/dev/null 2>&1
+elif [[ $has_secret == "true" && $protocol != "ssh" ]]; then
   password=$("$here/rc-secret" get "$id" 2>/dev/null) || {
     notify "Keyring locked or password missing" "$name: the client will ask for the password."
     password=""
   }
+fi
+if [[ -n $password ]]; then
   if [[ $password == *$'\n'* ]]; then
     fail "Stored password for $name contains a line break, which the RDP/VNC clients can't take."
   fi
@@ -99,9 +106,41 @@ run_client() {
   "$@" 0<&0 >"$log" 2>&1 &
   pid=$!
   printf '%s\t%s\t%s\t%s\n' "$pid" "$protocol" "$(date +%s%3N)" "$name" >"$session_dir/$id"
+
+  # xfreerdp3 asks for missing credentials (or a changed certificate) on a
+  # terminal it doesn't have, and would sit there forever with no window.
+  # Watch its output for such a prompt and stop it with an explanation.
+  local prompt_flag="$log.prompt"
+  rm -f "$prompt_flag"
+  (
+    for _ in $(seq 1 60); do
+      sleep 0.5
+      kill -0 "$pid" 2>/dev/null || exit 0
+      if tail -c 300 "$log" 2>/dev/null | grep -qiE '(domain|password|username|user)[^:]*:[[:space:]]*$|\(Y/T/N\)|do you trust'; then
+        tail -c 300 "$log" | tr -s ' ' | tail -n 1 >"$prompt_flag"
+        kill "$pid" 2>/dev/null
+        exit 0
+      fi
+    done
+  ) &
+  local watcher=$!
+
   wait "$pid"
   status=$?
+  kill "$watcher" 2>/dev/null
   rm -f "$session_dir/$id"
+  # Disconnect from the popup (bin/rc-sessions stop): not an error, whatever
+  # exit code the client picks for SIGTERM.
+  if [[ -f $session_dir/$id.stopping ]]; then
+    rm -f "$session_dir/$id.stopping"
+    return 0
+  fi
+  if [[ -f $prompt_flag ]]; then
+    notify -u critical "$name: the server asked for credentials" \
+      "FreeRDP wanted \"$(tr -d '\n' <"$prompt_flag")\" in a terminal it doesn't have. Connect from the popup to type the password, check the user/domain in the connection, or turn off Connection bar (its client has its own dialog)."
+    rm -f "$prompt_flag"
+    return 1
+  fi
   # FreeRDP exits with 12/13 (logoff/disconnect by user) on a normal close;
   # 143 is our own Disconnect (SIGTERM from bin/rc-sessions).
   if (( status != 0 && status != 12 && status != 13 && status != 143 )); then

@@ -113,7 +113,38 @@ Item {
     return Model.clientFor(protocol, availableClients) !== ""
   }
 
-  function connect(id) {
+  // RDP through xfreerdp3 (the client with the connection bar) can't ask
+  // for a password itself — it would prompt on a terminal it doesn't have —
+  // so the popup asks first when none is saved. sdl-freerdp3 and TigerVNC
+  // have their own dialogs.
+  function needsPassword(c) {
+    if (!c || c.protocol !== "rdp" || c.hasSecret) return false
+    if (c.rdp && c.rdp.connectionBar === false && availableClients.indexOf("sdl-freerdp3") >= 0) return false
+    return availableClients.indexOf("xfreerdp3") >= 0
+  }
+
+  // Connect with a password typed in the popup. remember: keep it in the
+  // keyring for next time; otherwise it waits there under a one-time id that
+  // bin/rc-connect reads and deletes. Never on a command line either way.
+  function connectWithPassword(id, user, password, remember, done) {
+    var c = find(id)
+    if (!c || password === "") { if (done) done(false); return }
+    if (user !== undefined && user !== null && Model.clean(user) !== c.user) setField(id, "user", Model.clean(user))
+    if (remember) {
+      runSecret(["set", id, c.name], password + "\n", function(ok) {
+        if (!ok) { root.lastError = "Couldn't save the password in the keyring (is it locked?)."; if (done) done(false); return }
+        setField(id, "hasSecret", true)
+        if (done) done(root.connect(id))
+      })
+    } else {
+      runSecret(["set", "once-" + id, c.name + " (one-time)"], password + "\n", function(ok) {
+        if (!ok) { root.lastError = "Couldn't hand the password over through the keyring (is it locked?)."; if (done) done(false); return }
+        if (done) done(root.connect(id, true))
+      })
+    }
+  }
+
+  function connect(id, oncePassword) {
     var c = findAny(id)
     if (!c) return false
     if (clientsChecked && !hasClient(c.protocol)) {
@@ -123,7 +154,7 @@ Item {
     lastError = ""
     // uwsm-app puts the client in its own systemd unit, so an omarchy-shell
     // restart doesn't take an open RDP/VNC/SSH session down with it.
-    Quickshell.execDetached(["uwsm-app", "--", bundledPath("bin/rc-connect"), Model.connectPayload(c)])
+    Quickshell.execDetached(["uwsm-app", "--", bundledPath("bin/rc-connect"), Model.connectPayload(c, oncePassword === true)])
     if (!Model.isSshConfigEntry(c)) setField(id, "lastUsed", Date.now())
     sessionsRecheck.restart()
     return true
