@@ -184,7 +184,7 @@ Item {
 
   // Everything the Setup view manages, and whether it's installed
   // (bin/rc-packages): { libsecret: true, tigervnc: false, … }.
-  readonly property var managedPackages: ["libsecret", "openssh", "freerdp", "tigervnc", "wayvnc", "ufw", "tailscale"]
+  readonly property var managedPackages: ["libsecret", "openssh", "freerdp", "tigervnc"]
   property var packages: ({})
   property bool packagesChecked: false
 

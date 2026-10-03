@@ -101,7 +101,7 @@ if [[ -s $run_dir/run-$token.err ]]; then
   exit 1
 fi
 if (( ${#cmds[@]} == 0 )); then
-  style --bold "Nothing to change — this machine is already set up that way."
+  style --bold "Nothing to change — it's already that way."
   write_result ok
   close_prompt
   exit 0
@@ -129,7 +129,7 @@ for i in "${!cmds[@]}"; do
 done
 echo
 if $uses_sudo; then
-  warning="⚠  These commands change your system (services, firewall, packages).
+  warning="⚠  These commands change your system (they install or remove packages).
 Only run them if you know what they do. Steps marked \"as administrator\"
 run with sudo, which asks for your password."
 else

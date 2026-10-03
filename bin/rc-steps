@@ -21,32 +21,10 @@
 # Actions:
 #   install <package>...          omarchy pkg add ...
 #   remove <package>...           omarchy pkg drop ...
-#   ssh-enable lan|tailscale      start + enable sshd, open its port
-#   ssh-disable                   stop + disable sshd, close its port
-#   keys-on | keys-off            turn SSH password logins off / back on
-#   vnc-firewall lan|tailscale <port>
-#   vnc-firewall close
 #   ssh-key-setup [user@]host [port]   create a key if needed, ssh-copy-id it
-#   authorize-key '<public key>'       let that key log in to this machine
-#
-# Firewall rules added here carry the comment "omarchy-remote-connections
-# <ssh|vnc>". Only rules with that comment are ever removed: they're looked up
-# in ufw's world-readable rule files, and deleted by their exact spec.
 
 set -uo pipefail
 
-TAG="omarchy-remote-connections"
-# "05-" so it's read before other drop-ins: sshd keeps the FIRST value it
-# reads for a keyword, so a later file can't turn passwords back on.
-DROPIN="/etc/ssh/sshd_config.d/05-omarchy-remote-connections.conf"
-# Name used before; still removed by keys-off.
-LEGACY_DROPIN="/etc/ssh/sshd_config.d/90-omarchy-remote-connections.conf"
-# "Local network" means private address ranges only. A plain `ufw allow
-# <port>/tcp` would also accept connections from the internet, e.g. over a
-# public IPv6 address, which most home connections now have.
-PRIVATE_NETS="10.0.0.0/8 172.16.0.0/12 192.168.0.0/16 fe80::/10 fc00::/7"
-# Overridable only so the parsing can be tested against sample rule files.
-UFW_DIR=${RC_UFW_DIR:-/etc/ufw}
 PKG_RE='^[a-z0-9][a-z0-9+._-]*$'
 
 die() {
@@ -61,12 +39,6 @@ after() { printf '#after\t%s\n' "$1"; }
 undo() { printf '#undo\t%s\n' "$1"; }
 reverse() { printf '#reverse\t%s\n' "$*"; }
 
-ufw_enabled() {
-  grep -qE '^ENABLED=yes' "$UFW_DIR/ufw.conf" 2>/dev/null
-}
-
-hex() { printf '%s' "$1" | od -An -tx1 | tr -d ' \n'; }
-
 check_port() {
   if ! [[ $1 =~ ^[0-9]+$ ]] || (( $1 < 1 || $1 > 65535 )); then
     die "invalid port: $1"
@@ -79,54 +51,6 @@ check_packages() {
   for pkg in "$@"; do
     [[ $pkg =~ $PKG_RE ]] || die "invalid package name: $pkg"
   done
-}
-
-# First Port sshd would use: drop-ins are included at the top of
-# sshd_config, and the first value read wins.
-ssh_port() {
-  local port
-  port=$(cat /etc/ssh/sshd_config.d/*.conf /etc/ssh/sshd_config 2>/dev/null \
-    | awk 'tolower($1) == "port" && $2 ~ /^[0-9]+$/ { print $2; exit }')
-  echo "${port:-22}"
-}
-
-# Steps removing the rules this plugin added for <what> (ssh|vnc), each by
-# its exact spec (ufw deletes the v4 and v6 copies of a spec together).
-close_steps() {
-  local what=$1 comment line port src iface key seen=" "
-  ufw_enabled || return 0
-  comment="comment=$(hex "$TAG $what")"
-  while read -r line; do
-    # "### tuple ### allow tcp <dport> <dst> <sport> <src> <in|in_iface> comment=..."
-    read -r _ _ _ _ _ port _ _ src iface _ <<<"$line"
-    [[ $port =~ ^[0-9]+$ && $src =~ ^[0-9A-Fa-f:./]+$ ]] || continue
-    [[ $src == 0.0.0.0/0 || $src == ::/0 ]] && src=any
-    key="$port/$src/$iface"
-    case "$seen" in *" $key "*) continue ;; esac
-    seen+="$key "
-    if [[ $iface == in_tailscale0 ]]; then
-      root "Remove the firewall rule letting Tailscale reach port $port ($what)" \
-        "ufw delete allow in on tailscale0 to any port $port proto tcp"
-    elif [[ $src == any ]]; then
-      root "Remove the firewall rule opening port $port ($what) to every network" \
-        "ufw delete allow $port/tcp"
-    else
-      root "Remove the firewall rule opening port $port ($what) to $src" \
-        "ufw delete allow from $src to any port $port proto tcp"
-    fi
-  done < <(grep -h '^### tuple ###' "$UFW_DIR/user.rules" "$UFW_DIR/user6.rules" 2>/dev/null | grep -F "$comment")
-}
-
-open_step() {
-  local what=$1 scope=$2 port=$3
-  ufw_enabled || return 0
-  if [[ $scope == tailscale ]]; then
-    root "Let devices on your tailnet reach port $port ($what) through the firewall" \
-      "ufw allow in on tailscale0 to any port $port proto tcp comment '$TAG $what'"
-  else
-    root "Open port $port ($what) to private networks only (home/office LANs, not the internet)" \
-      "for net in $PRIVATE_NETS; do ufw allow from \$net to any port $port proto tcp comment '$TAG $what' || exit 1; done"
-  fi
 }
 
 plan() {
@@ -147,86 +71,6 @@ plan() {
       after "$* removed; features that need it show Install again"
       undo "Install it again from Setup"
       reverse install "$@"
-      ;;
-
-    ssh-enable)
-      local scope=${1:-}
-      [[ $scope == lan || $scope == tailscale ]] || die "ssh-enable: scope must be lan or tailscale"
-      root "Start the SSH server now and at every boot" "systemctl enable --now sshd.service"
-      close_steps ssh
-      open_step ssh "$scope" "$(ssh_port)"
-      after "SSH server runs now and at every boot, on port $(ssh_port)"
-      if ! ufw_enabled; then
-        after "Firewall is off: SSH is reachable from every network you're on, including the internet if you have a public IPv6 address"
-      elif [[ $scope == tailscale ]]; then
-        after "Only devices on your tailnet can reach it"
-      else
-        after "Devices on private networks (your LAN) can reach it; the internet can't"
-      fi
-      if [[ -f $DROPIN ]]; then after "Only SSH keys can log in (Require keys is on)"; else after "Password logins are allowed: add a key, then Require keys"; fi
-      undo "Turn the SSH server off; the reverse commands get the same review"
-      reverse ssh-disable
-      ;;
-
-    ssh-disable)
-      root "Stop the SSH server and don't start it at boot" "systemctl disable --now sshd.service"
-      close_steps ssh
-      after "Nobody can log in to this computer over SSH"
-      undo "Turn the SSH server on again"
-      ;;
-
-    keys-on)
-      grep -qE '^[[:space:]]*[^#[:space:]]' "$HOME/.ssh/authorized_keys" 2>/dev/null \
-        || die "No keys in ~/.ssh/authorized_keys yet — add one first, or you'd lock yourself out."
-      # sshd -t/-T refuse to run without host keys, which only appear once
-      # sshd has started for the first time.
-      if [[ ! -e /etc/ssh/ssh_host_ed25519_key ]]; then
-        root "Create the SSH server's host keys (they don't exist yet)" "ssh-keygen -A"
-      fi
-      root "Write an sshd drop-in that turns password logins off (read first, so no other file can turn them back on)" \
-        "printf '%s\\n' '# Managed by the Omarchy Remote Connections plugin (Require keys).' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' > $DROPIN && chmod 644 $DROPIN"
-      if [[ -e $LEGACY_DROPIN ]]; then
-        root "Remove the plugin's older drop-in" "rm -f $LEGACY_DROPIN"
-      fi
-      root "Check the new sshd config, and remove the drop-in again if sshd rejects it" \
-        "sshd -t || { rm -f $DROPIN; exit 1; }"
-      root "Show what sshd will actually use (both should say no)" \
-        "sshd -T | grep -Ei '^(passwordauthentication|kbdinteractiveauthentication) '"
-      if systemctl is-active --quiet sshd.service; then
-        root "Reload the running SSH server so the change applies" "systemctl reload sshd.service"
-      fi
-      after "Only the keys in ~/.ssh/authorized_keys can log in over SSH; passwords are refused"
-      undo "Turn Require keys off (removes $DROPIN)"
-      reverse keys-off
-      ;;
-
-    keys-off)
-      root "Remove the drop-in, allowing password logins again" "rm -f $DROPIN $LEGACY_DROPIN"
-      if systemctl is-active --quiet sshd.service; then
-        root "Reload the running SSH server so the change applies" "systemctl reload sshd.service"
-      fi
-      after "Your account password works for SSH logins again"
-      undo "Turn Require keys on again"
-      ;;
-
-    vnc-firewall)
-      local scope=${1:-}
-      if [[ $scope == close ]]; then
-        close_steps vnc
-        after "The screen-sharing port is closed in the firewall"
-      else
-        [[ $scope == lan || $scope == tailscale ]] || die "vnc-firewall: scope must be lan, tailscale or close"
-        check_port "${2:-}"
-        close_steps vnc
-        open_step vnc "$scope" "$2"
-        if [[ $scope == tailscale ]]; then
-          after "Devices on your tailnet can reach screen sharing on port $2 (password required)"
-        else
-          after "Devices on private networks (your LAN) can reach screen sharing on port $2 (password required); the internet can't"
-        fi
-        undo "Turn screen sharing off; it closes the port the same way"
-        reverse vnc-firewall close
-      fi
       ;;
 
     ssh-key-setup)
@@ -253,24 +97,6 @@ plan() {
         "ssh-copy-id -i $key.pub${port:+ -p $port} $target"
       after "You log in to $target with your key ($key) instead of its password"
       undo "On $target, delete the line with your key from ~/.ssh/authorized_keys"
-      ;;
-
-    authorize-key)
-      local pubkey=${1:-}
-      # No quotes (the key is embedded in '…') and no control characters: a
-      # newline would sneak in a second key, an escape sequence could redraw
-      # the review.
-      [[ $pubkey != *[[:cntrl:]]* ]] || die "The key contains control characters (line breaks, escapes); paste just the one line."
-      [[ $pubkey =~ ^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp(256|384|521)|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com)\ [A-Za-z0-9+/]+=*(\ [^\']*)?$ ]] \
-        || die "That doesn't look like an SSH public key (it should start with ssh-ed25519, ssh-rsa or ecdsa-…)."
-      local label
-      read -r _ _ label <<<"$pubkey"
-      [[ -n $label ]] || label="this key"
-      user "Create ~/.ssh if needed, readable only by you" "mkdir -p ~/.ssh && chmod 700 ~/.ssh"
-      user "Add the key ($label) to ~/.ssh/authorized_keys" \
-        "printf '%s\\n' '$pubkey' >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
-      after "Whoever holds the private key for \"$label\" can log in to this computer over SSH"
-      undo "Delete that line from ~/.ssh/authorized_keys"
       ;;
 
     *)

@@ -42,10 +42,10 @@ omarchy plugin validate .
 
 - `manifest.json` — plugin metadata: kinds `bar-widget` + `overlay`,
   `keepLoaded` so the launcher opens with the list already loaded
-- `BarWidget.qml` is only the frame: bar icon, header, the two tabs and
-  keyboard routing; the content lives in `ConnectTab.qml` (search, sections,
-  row actions, first-run cards), `MachineTab.qml` (SSH server and screen
-  sharing cards) and `ConnectionForm.qml` (add/edit). `Pill.qml` is the
+- `BarWidget.qml` is only the frame: bar icon, header with the Setup gear,
+  and keyboard routing; the content lives in `ConnectTab.qml` (search,
+  sections, open sessions, row actions, inline password prompt, first-run
+  cards) and `ConnectionForm.qml` (add/edit). `Pill.qml` is the
   small button they share. Status colors (green/yellow/blue/magenta) come
   from the current theme's `colors.toml`, since the shell palette has none
 - `ChangeSheet.qml` — the review sheet (its own overlay window): loads a plan
@@ -63,21 +63,19 @@ omarchy plugin validate .
   installed, reads `~/.ssh/config` hosts, launches connections and queues
   keyring operations. The bar widget and the launcher each have their own
   instance; they stay in sync through the file (watched for changes)
-- `HostService.qml` — the *This machine* section's state (polled from
-  `bin/rc-host-status`) and actions, run one at a time; anything needing
-  sudo goes through `bin/rc-terminal`
 - `Model.js` — pure helpers (normalize, validate, sort, filter, the JSON
   handed to `rc-connect`); no QML types, so it can be tested with `node`
 - `bin/rc-connect` — opens one connection: ssh in a terminal, FreeRDP with
-  its arguments on stdin, TigerVNC with the password in its environment
+  its arguments on stdin, TigerVNC with the password in its environment.
+  Records the RDP/VNC session for `rc-sessions`, and stops FreeRDP (with an
+  explanation) if it asks for credentials on a terminal it doesn't have
 - `bin/rc-ssh-hosts` — lists concrete `Host` aliases from `~/.ssh/config`
   and its `Include`s (read-only)
 - `bin/rc-steps` — plans system changes without running anything: one
   `mode<TAB>description<TAB>command` per step (mode `root`, `user` or
-  `interactive`), plus `#after`/`#undo`/`#reverse` lines (sshd, the *Keys only* drop-in,
-  `omarchy pkg add` for packages,
-  ufw rules tagged `omarchy-remote-connections <ssh|vnc>` — the only rules
-  it removes). Actions can be chained with `+`
+  `interactive`), plus `#after`/`#undo`/`#reverse` lines. Actions:
+  `install`/`remove` (`omarchy pkg add`/`drop`) and `ssh-key-setup`
+  (ssh-keygen + ssh-copy-id, interactive). Chain them with `+`
 - `bin/rc-packages` — which of the managed packages are installed
 - `bin/rc-terminal` — opens an Omarchy floating terminal running
   `bin/rc-run-steps`, waits for it and exits with its outcome
@@ -87,10 +85,6 @@ omarchy plugin validate .
   all / confirm each / cancel*, then runs each command with `bash -c` exactly
   as shown — `sudo bash -c` for administrator steps. No script of the plugin
   ever runs as root
-- `bin/rc-host-status` — unprivileged status snapshot (`key<TAB>value`);
-  reads ufw's world-readable rule files, never the keyring
-- `bin/rc-vnc` — start/stop wayvnc as the transient user unit
-  `omarchy-remote-wayvnc`, with its own control socket
 - `bin/rc-sessions` — lists the RDP/VNC windows `rc-connect` opened that are
   still running (records in `$XDG_RUNTIME_DIR/omarchy-remote-connections/sessions/`),
   and stops or focuses one; only ever signals a freerdp/vncviewer process

@@ -2,8 +2,8 @@ import QtQuick
 import qs.Commons
 import qs.Ui
 
-// Setup (the gear in the popup's header): everything the plugin uses, what
-// it's for and whether it's installed. Install or remove one item, or tick
+// Setup (the gear in the popup's header): the clients the plugin uses, what
+// each is for and whether it's installed. Install or remove one item, or tick
 // several and install them together — always through the review sheet
 // (exact command, one password).
 Column {
@@ -11,7 +11,6 @@ Column {
 
   property var panel: null
   property var store: null
-  property var host: null
 
   // Package ids ticked for a batch install. Needed-but-missing ones start
   // ticked.
@@ -23,22 +22,14 @@ Column {
     { title: "NEEDED", items: [
       { pkg: "libsecret", name: "Password keyring", required: true,
         note: "Keeps RDP/VNC passwords out of plain files" },
-      { pkg: "openssh", name: "SSH client and server", required: true,
+      { pkg: "openssh", name: "SSH client", required: true,
         note: "SSH connections · " + store.protocolUse.ssh + " saved" }
     ]},
-    { title: "TO CONNECT TO OTHER COMPUTERS", items: [
+    { title: "CLIENTS", items: [
       { pkg: "freerdp", name: "RDP client", removable: true,
         note: "Windows desktops · " + store.protocolUse.rdp + " saved", needed: store.protocolUse.rdp > 0 },
       { pkg: "tigervnc", name: "VNC viewer", removable: true,
         note: "Other desktops over VNC · " + store.protocolUse.vnc + " saved", needed: store.protocolUse.vnc > 0 }
-    ]},
-    { title: "TO LET OTHERS REACH THIS COMPUTER", items: [
-      { pkg: "wayvnc", name: "Screen sharing server", removable: true,
-        note: "Share this Hyprland screen over VNC" },
-      { pkg: "ufw", name: "Firewall", recommended: true,
-        note: host.ufwEnabled ? "Active · limits who reaches SSH and screen sharing" : "Installed but off: everything you turn on is reachable from every network" },
-      { pkg: "tailscale", name: "Tailscale",
-        note: host.tailscaleIp !== "" ? "Connected · " + host.tailscaleIp : "Needed for “Tailscale only”; connect it from its bar icon" }
     ]}
   ]
 
@@ -58,7 +49,6 @@ Column {
   }
 
   function afterChange(ok) {
-    host.refresh()
     if (ok) reset()
   }
 
@@ -69,7 +59,7 @@ Column {
 
   Text {
     width: parent.width
-    text: "Everything the plugin uses. Install only what you need; nothing is installed or removed without the review."
+    text: "The clients the plugin uses. Install only what you need; nothing is installed or removed without the review."
     wrapMode: Text.Wrap
     color: panel.dim
     font.family: panel.fontFamily
