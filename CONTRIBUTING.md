@@ -43,10 +43,13 @@ omarchy plugin validate .
 - `manifest.json` — plugin metadata: kinds `bar-widget` + `overlay`,
   `keepLoaded` so the launcher opens with the list already loaded
 - `BarWidget.qml` is only the frame: bar icon, header with the Setup gear,
-  and keyboard routing; the content lives in `ConnectTab.qml` (search,
-  sections, open sessions, row actions, inline password prompt, first-run
-  cards) and `ConnectionForm.qml` (add/edit). `Pill.qml` is the
-  small button they share. Status colors (green/yellow/blue/magenta) come
+  and keyboard routing; the content lives in `ConnectTab.qml` (folder
+  navigation and breadcrumb, search, open sessions, new folder, first-run
+  cards), its rows `FolderRow.qml` (open, rename, delete) and
+  `ConnectionRow.qml` (actions, Move to, inline password prompt, delete),
+  and `ConnectionForm.qml` (add/edit). `Pill.qml` is the small button they
+  share; `Field.qml` is the shell's TextField keeping Return to itself (so
+  it doesn't also reach the popup's key handler and connect a row). Status colors (green/yellow/blue/magenta) come
   from the current theme's `colors.toml`, since the shell palette has none
 - `ChangeSheet.qml` — the review sheet (its own overlay window): loads a plan
   from `bin/rc-steps`, shows it, runs the ticked commands in one
@@ -63,8 +66,9 @@ omarchy plugin validate .
   installed, reads `~/.ssh/config` hosts, launches connections and queues
   keyring operations. The bar widget and the launcher each have their own
   instance; they stay in sync through the file (watched for changes)
-- `Model.js` — pure helpers (normalize, validate, sort, filter, the JSON
-  handed to `rc-connect`); no QML types, so it can be tested with `node`
+- `Model.js` — pure helpers (normalize, validate, folders — paths, listing,
+  rename, delete —, what each folder view shows, filter, the JSON handed to
+  `rc-connect`); no QML types, so it can be tested with `node`
 - `bin/rc-connect` — opens one connection: ssh in a terminal, FreeRDP with
   its arguments on stdin, TigerVNC with the password in its environment.
   Records the RDP/VNC session for `rc-sessions`, and stops FreeRDP (with an

@@ -67,7 +67,7 @@ function normalize(raw) {
     host: host,
     port: toPort(c.port, protocol),
     user: clean(c.user),
-    group: clean(c.group),
+    group: folderPath(c.group),
     favorite: c.favorite === true,
     lastUsed: typeof c.lastUsed === "number" && isFinite(c.lastUsed) ? c.lastUsed : 0,
     hasSecret: c.hasSecret === true,
@@ -94,7 +94,7 @@ function parseList(text) {
   try {
     data = JSON.parse(String(text || "").trim() || "{}")
   } catch (e) {
-    return { ok: false, connections: [], error: "connections.json is not valid JSON: " + e.message }
+    return { ok: false, connections: [], folders: [], error: "connections.json is not valid JSON: " + e.message }
   }
   var list = Array.isArray(data) ? data : (data && Array.isArray(data.connections) ? data.connections : [])
   var seen = {}
@@ -105,11 +105,12 @@ function parseList(text) {
     seen[c.id] = true
     out.push(c)
   }
-  return { ok: true, connections: out, error: "" }
+  var folders = data && Array.isArray(data.folders) ? normalizeFolders(data.folders) : []
+  return { ok: true, connections: out, folders: folders, error: "" }
 }
 
-function serialize(connections) {
-  return JSON.stringify({ version: 1, connections: connections || [] }, null, 2) + "\n"
+function serialize(connections, folders) {
+  return JSON.stringify({ version: 1, folders: folders || [], connections: connections || [] }, null, 2) + "\n"
 }
 
 // Returns "" when the draft is acceptable, otherwise a message for the form.
@@ -134,29 +135,140 @@ function validate(draft) {
   return ""
 }
 
-// Favorites first, then by group (ungrouped last), then by name.
-function sorted(connections) {
-  return (connections || []).slice().sort(function(a, b) {
-    if (a.favorite !== b.favorite) return a.favorite ? -1 : 1
-    var ga = a.group.toLowerCase(), gb = b.group.toLowerCase()
-    if (ga !== gb) {
-      if (ga === "") return 1
-      if (gb === "") return -1
-      return ga < gb ? -1 : 1
-    }
-    var na = a.name.toLowerCase(), nb = b.name.toLowerCase()
-    return na < nb ? -1 : (na > nb ? 1 : 0)
-  })
+// --- Folders ---
+// A connection's `group` is the path of the folder it lives in, one segment
+// per level: "Work/Servers" is the folder Servers inside Work, "" the top
+// level. A folder exists while something lives in it, or while it's listed
+// in connections.json's "folders" (that's how an empty one survives).
+
+// "  Work / Servers/ " -> "Work/Servers"; control characters and empty
+// segments go away, so a path never starts or ends with "/".
+function folderPath(value) {
+  return clean(value).split("/")
+    .map(function(s) { return s.trim() })
+    .filter(function(s) { return s !== "" })
+    .join("/")
 }
 
-function groups(connections) {
+function parentFolder(path) {
+  var i = path.lastIndexOf("/")
+  return i < 0 ? "" : path.slice(0, i)
+}
+
+function folderName(path) {
+  return path.slice(path.lastIndexOf("/") + 1)
+}
+
+// "Work/Servers" -> "Work › Servers", for display.
+function folderLabel(path) {
+  return path === "" ? "" : path.split("/").join(" › ")
+}
+
+// True for the folder itself and everything below it ("" holds everything).
+function isInside(path, folder) {
+  return folder === "" || path === folder || path.indexOf(folder + "/") === 0
+}
+
+function byName(a, b) {
+  var na = a.toLowerCase(), nb = b.toLowerCase()
+  return na < nb ? -1 : (na > nb ? 1 : 0)
+}
+
+// Unique, normalized, sorted paths, each with all its parents.
+function normalizeFolders(list) {
   var seen = {}
   var out = []
-  for (var i = 0; i < (connections || []).length; i++) {
-    var g = connections[i].group
-    if (g !== "" && !seen[g]) { seen[g] = true; out.push(g) }
+  for (var i = 0; i < (list || []).length; i++) {
+    var p = folderPath(list[i])
+    while (p !== "" && !seen[p]) {
+      seen[p] = true
+      out.push(p)
+      p = parentFolder(p)
+    }
   }
-  return out.sort()
+  return out.sort(byName)
+}
+
+// Every folder: the saved ones plus where connections live.
+function allFolders(connections, folders) {
+  var paths = (folders || []).slice()
+  for (var i = 0; i < (connections || []).length; i++)
+    if (connections[i].group !== "") paths.push(connections[i].group)
+  return normalizeFolders(paths)
+}
+
+// The folders directly inside `parent`, with what's in each (counting
+// subfolders) and which protocols show up there.
+function childFolders(connections, folders, parent) {
+  var all = allFolders(connections, folders)
+  var out = []
+  for (var i = 0; i < all.length; i++) {
+    if (parentFolder(all[i]) !== parent) continue
+    var path = all[i]
+    var inside = (connections || []).filter(function(c) { return isInside(c.group, path) })
+    var protocols = PROTOCOLS.filter(function(p) { return inside.some(function(c) { return c.protocol === p }) })
+    out.push({
+      path: path,
+      name: folderName(path),
+      count: inside.length,
+      folders: all.filter(function(f) { return parentFolder(f) === path }).length,
+      protocols: protocols
+    })
+  }
+  return out.sort(function(a, b) { return byName(a.name, b.name) })
+}
+
+// "All › Work › Servers": one entry per level, the top level first.
+function breadcrumbs(path) {
+  var out = [{ name: "All", path: "" }]
+  var parts = path === "" ? [] : path.split("/")
+  for (var i = 0; i < parts.length; i++)
+    out.push({ name: parts[i], path: parts.slice(0, i + 1).join("/") })
+  return out
+}
+
+// Moves `from` (and everything below it) to `to`. Returns the new lists.
+function moveFolder(connections, folders, from, to) {
+  var swap = function(p) { return isInside(p, from) && from !== "" ? to + p.slice(from.length) : p }
+  return {
+    connections: (connections || []).map(function(c) {
+      if (!isInside(c.group, from) || c.group === "" ) return c
+      var copy = JSON.parse(JSON.stringify(c))
+      copy.group = folderPath(swap(c.group))
+      return copy
+    }),
+    folders: normalizeFolders((folders || []).map(swap))
+  }
+}
+
+// Deletes a folder without deleting what's in it: its connections and
+// subfolders move up one level. Returns the new lists.
+function removeFolder(connections, folders, path) {
+  var parent = parentFolder(path)
+  var up = function(p) {
+    if (!isInside(p, path) || path === "") return p
+    var rest = p.slice(path.length + 1)
+    return parent === "" ? rest : (rest === "" ? parent : parent + "/" + rest)
+  }
+  return {
+    connections: (connections || []).map(function(c) {
+      if (c.group === "" || !isInside(c.group, path)) return c
+      var copy = JSON.parse(JSON.stringify(c))
+      copy.group = folderPath(up(c.group))
+      return copy
+    }),
+    folders: normalizeFolders((folders || []).filter(function(f) { return f !== path }).map(up))
+  }
+}
+
+// "" when `name` works as a folder name next to its siblings in `parent`.
+function validateFolderName(name, parent, existing, current) {
+  var n = clean(name)
+  if (n === "") return "Give the folder a name."
+  if (n.indexOf("/") >= 0) return "Folder names can't contain \"/\"."
+  var path = parent === "" ? n : parent + "/" + n
+  if (path !== current && (existing || []).indexOf(path) >= 0) return "There's already a folder called “" + n + "” here."
+  return ""
 }
 
 function address(c) {
@@ -169,7 +281,7 @@ function subtitle(c) {
   if (!c) return ""
   if (isSshConfigEntry(c)) return "SSH · " + c.display + " · ~/.ssh/config"
   var parts = [protocolLabel(c.protocol), address(c)]
-  if (c.group) parts.push(c.group)
+  if (c.group) parts.push(folderLabel(c.group))
   return parts.join(" · ")
 }
 
@@ -298,36 +410,49 @@ function protocolCounts(connections, sshHosts) {
   return counts
 }
 
-// Sections for the Connect tab. Searching or filtering by protocol gives a
-// flat RESULTS list (ranked like the launcher); otherwise RECENT (the last
-// 3 used), FAVORITES, one section per group, CONNECTIONS (ungrouped) and
-// FROM ~/.SSH/CONFIG, each connection appearing once.
-function connectSections(connections, sshHosts, query, protocol) {
+// Pseudo-folder holding the ~/.ssh/config hosts. A real folder path can't
+// start with "/" (folderPath drops empty segments), so it never collides.
+var SSH_CONFIG_FOLDER = "/ssh-config"
+
+function byConnectionName(a, b) {
+  return byName(a.name, b.name)
+}
+
+// What the Connect tab shows, as sections of { id, title, kind, rows }
+// (kind "folder" rows come from childFolders, "connection" rows are
+// connections). Searching or filtering by protocol gives one flat RESULTS
+// list across every folder (ranked like the launcher). Otherwise it's the
+// folder `path`: at the top level FAVORITES and RECENT (the last 3 used, once
+// there's more than a handful) first, then its folders, then the
+// connections that live right there.
+function browse(connections, folders, sshHosts, path, query, protocol) {
   var proto = PROTOCOLS.indexOf(protocol) >= 0 ? protocol : ""
-  var byProto = function(c) { return proto === "" || c.protocol === proto }
-  if (clean(query) !== "" || proto !== "") {
-    var hits = quickList(connections, sshHosts, query).filter(byProto)
-    return hits.length > 0 ? [{ title: "RESULTS", rows: hits }] : []
-  }
   var saved = connections || []
-  var used = {}
-  var sections = []
-  var recent = saved.filter(function(c) { return c.lastUsed > 0 })
-    .sort(function(a, b) { return b.lastUsed - a.lastUsed }).slice(0, 3)
-  recent.forEach(function(c) { used[c.id] = true })
-  if (recent.length > 0 && saved.length > 3) sections.push({ title: "RECENT", rows: recent })
-  else used = {}
-  var rest = sorted(saved.filter(function(c) { return !used[c.id] }))
-  var favorites = rest.filter(function(c) { return c.favorite })
-  if (favorites.length > 0) sections.push({ title: "FAVORITES", rows: favorites })
-  var groupNames = groups(rest.filter(function(c) { return !c.favorite }))
-  groupNames.forEach(function(g) {
-    sections.push({ title: plainLabel(g).toUpperCase(), rows: rest.filter(function(c) { return !c.favorite && c.group === g }) })
-  })
-  var ungrouped = rest.filter(function(c) { return !c.favorite && c.group === "" })
-  if (ungrouped.length > 0) sections.push({ title: groupNames.length > 0 || favorites.length > 0 ? "OTHER" : "CONNECTIONS", rows: ungrouped })
+  if (clean(query) !== "" || proto !== "") {
+    var hits = quickList(saved, sshHosts, query).filter(function(c) { return proto === "" || c.protocol === proto })
+    return hits.length > 0 ? [{ id: "results", title: "RESULTS", kind: "connection", rows: hits }] : []
+  }
   var cfg = unsavedSshHosts(saved, sshHosts)
-  if (cfg.length > 0) sections.push({ title: "FROM ~/.SSH/CONFIG", rows: cfg })
+  if (path === SSH_CONFIG_FOLDER)
+    return cfg.length > 0 ? [{ id: "ssh-config", title: "", kind: "connection", rows: cfg }] : []
+
+  var sections = []
+  if (path === "") {
+    var favorites = saved.filter(function(c) { return c.favorite }).sort(byConnectionName)
+    if (favorites.length > 0) sections.push({ id: "favorites", title: "FAVORITES", kind: "connection", rows: favorites })
+    var recent = saved.filter(function(c) { return c.lastUsed > 0 && !c.favorite })
+      .sort(function(a, b) { return b.lastUsed - a.lastUsed }).slice(0, 3)
+    if (recent.length > 0 && saved.length > 5) sections.push({ id: "recent", title: "RECENT", kind: "connection", rows: recent })
+  }
+  var sub = childFolders(saved, folders, path)
+  if (path === "" && cfg.length > 0)
+    sub.push({ path: SSH_CONFIG_FOLDER, name: "~/.ssh/config", count: cfg.length, folders: 0, protocols: ["ssh"], readOnly: true })
+  if (sub.length > 0) sections.push({ id: "folders", title: "FOLDERS", kind: "folder", rows: sub })
+  var here = saved.filter(function(c) { return c.group === path }).sort(byConnectionName)
+  // With nothing else in the view the breadcrumb already says where these
+  // are, so they go without a header.
+  if (here.length > 0)
+    sections.push({ id: "here", title: sections.length > 0 ? "CONNECTIONS" : "", kind: "connection", rows: here })
   return sections
 }
 

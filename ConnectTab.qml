@@ -3,10 +3,13 @@ import qs.Commons
 import qs.Ui
 import "Model.js" as Model
 
-// "Connect" tab: search + protocol chips, then the connections in sections
-// (recent, favorites, groups, ~/.ssh/config). The row under the mouse, or
-// the one picked with ↑/↓, shows its actions; everything else shows reachability and when it was
-// last used. With nothing saved yet, it shows the first-run cards instead.
+// "Connect" tab: your connections organized in folders, browsed like a file
+// manager. The top level has Favorites and Recent, then the folders
+// (~/.ssh/config hosts are a read-only one) and the connections that aren't
+// in any; opening a folder shows a breadcrumb back up. Searching looks in
+// every folder at once. The row under the mouse, or the one picked with
+// ↑/↓, shows its actions. With nothing saved yet, it shows the first-run
+// cards instead.
 Column {
   id: tab
 
@@ -14,122 +17,279 @@ Column {
   property var store: null
   property var flickable: null
 
+  // The folder being shown: "" is the top level, Model.SSH_CONFIG_FOLDER
+  // the ~/.ssh/config hosts.
+  property string folder: ""
   property string query: ""
   property string protoFilter: ""        // "" | ssh | rdp | vnc
-  // Keyboard cursor (↑/↓). The mouse doesn't set it: hovering highlights a
-  // row only while the pointer is on it (hoveredId), and moving over the
-  // list hands the highlight back to the mouse.
-  property string selectedId: ""
-  property string hoveredId: ""
-  property string menuId: ""             // row whose ⋯ actions are open
-  property string pendingDeleteId: ""
+  // Rows are addressed by key ("<section>|<connection id>" or
+  // "folder|<path>"), since a connection can be listed twice (Favorites and
+  // its folder). Keyboard cursor (↑/↓); the mouse doesn't set it: hovering
+  // highlights a row only while the pointer is on it (hoveredKey).
+  property string selectedKey: ""
+  property string hoveredKey: ""
+  property string menuKey: ""            // row whose ⋯ actions are open
+  property string moveKey: ""            // connection row picking a folder
+  property string renameKey: ""          // folder row being renamed
+  property string pendingDeleteKey: ""
   // RDP connection asking for its password inline before connecting.
-  property string passwordFor: ""
+  property string passwordKey: ""
   property bool rememberPassword: true
+  property bool addingFolder: false
+  property string folderError: ""
   property string copiedId: ""
   property real now: Date.now()
 
-  readonly property var sections: Model.connectSections(store.connections, store.sshHosts, query, protoFilter)
+  // The folder actually shown: `folder`, or the closest parent that still
+  // exists (it may have been renamed or deleted, here or in the file).
+  readonly property string here: {
+    if (folder === Model.SSH_CONFIG_FOLDER) return Model.unsavedSshHosts(store.connections, store.sshHosts).length > 0 ? folder : ""
+    var p = folder
+    while (p !== "" && store.allFolders.indexOf(p) < 0) p = Model.parentFolder(p)
+    return p
+  }
+  readonly property bool searching: query.trim() !== "" || protoFilter !== ""
+  readonly property bool atTop: here === "" || searching
+  readonly property var crumbs: here === Model.SSH_CONFIG_FOLDER
+    ? [{ name: "All", path: "" }, { name: "~/.ssh/config", path: here }]
+    : Model.breadcrumbs(here)
+  readonly property var sections: Model.browse(store.connections, store.folders, store.sshHosts, here, query, protoFilter)
   readonly property var flatRows: {
     var out = []
-    for (var i = 0; i < sections.length; i++) out = out.concat(sections[i].rows)
+    for (var i = 0; i < sections.length; i++) {
+      var s = sections[i]
+      for (var j = 0; j < s.rows.length; j++)
+        out.push({ key: rowKey(s, s.rows[j]), kind: s.kind, item: s.rows[j] })
+    }
     return out
   }
   readonly property var counts: Model.protocolCounts(store.connections, store.sshHosts)
-  readonly property bool firstRun: store.loaded && store.connections.length === 0 && store.sshHosts.length === 0
+  readonly property int protocolsInUse: (counts.ssh > 0 ? 1 : 0) + (counts.rdp > 0 ? 1 : 0) + (counts.vnc > 0 ? 1 : 0)
+  readonly property bool firstRun: store.loaded && store.connections.length === 0 && store.sshHosts.length === 0 && store.folders.length === 0
 
   spacing: Style.space(10)
 
+  function rowKey(section, item) {
+    return section.kind === "folder" ? "folder|" + item.path : section.id + "|" + item.id
+  }
+
   function reset() {
+    folder = ""
     query = ""
     protoFilter = ""
-    menuId = ""
-    pendingDeleteId = ""
-    selectedId = ""
-    hoveredId = ""
+    closeMenus()
+    addingFolder = false
     searchField.text = ""
   }
 
-  // Closes the ⋯ actions and the delete confirmation (tab switch, form).
+  // Closes every inline thing a row can open (tab switch, form, a click
+  // elsewhere).
   function closeMenus() {
-    menuId = ""
-    pendingDeleteId = ""
-    passwordFor = ""
-    selectedId = ""
-    hoveredId = ""
+    menuKey = ""
+    moveKey = ""
+    renameKey = ""
+    pendingDeleteKey = ""
+    passwordKey = ""
+    folderError = ""
+    selectedKey = ""
+    hoveredKey = ""
   }
 
-  function toggleMenu(id) {
-    pendingDeleteId = ""
-    menuId = menuId === id ? "" : id
-  }
-
-  // Esc peels one layer at a time; returns false when there's nothing left
-  // to close so the popup itself closes.
-  function handleEscape() {
-    if (passwordFor !== "") { passwordFor = ""; return true }
-    if (pendingDeleteId !== "") { pendingDeleteId = ""; return true }
-    if (menuId !== "") { menuId = ""; return true }
-    if (query !== "" || protoFilter !== "") { searchField.text = ""; protoFilter = ""; return true }
+  // True while another row has something open: hovering this one then
+  // doesn't steal the highlight, and clicking it just closes that.
+  function busyElsewhere(key) {
+    var open = [menuKey, moveKey, renameKey, passwordKey, pendingDeleteKey]
+    for (var i = 0; i < open.length; i++)
+      if (open[i] !== "" && open[i] !== key) return true
     return false
+  }
+
+  function toggleMenu(key) {
+    var wasOpen = menuKey === key
+    closeMenus()
+    menuKey = wasOpen ? "" : key
+    selectedKey = key
+  }
+
+  function startMove(key) {
+    closeMenus()
+    moveKey = key
+    selectedKey = key
+  }
+
+  function startRename(key) {
+    closeMenus()
+    renameKey = key
+    selectedKey = key
+  }
+
+  // --- Folders ---
+
+  function openFolder(path) {
+    closeMenus()
+    addingFolder = false
+    if (searching) {
+      searchField.text = ""
+      protoFilter = ""
+    }
+    folder = path
+    if (flickable) flickable.contentY = 0
+  }
+
+  // One level up; false when already at the top.
+  function goUp() {
+    if (searching || here === "") return false
+    var from = here
+    openFolder(here === Model.SSH_CONFIG_FOLDER ? "" : Model.parentFolder(here))
+    // Land on the folder we came from, so ↵ goes straight back in.
+    selectedKey = "folder|" + from
+    return true
+  }
+
+  function renameFolder(path, name) {
+    var to = store.renameFolder(path, name)
+    if (to === "") { folderError = store.lastError; store.lastError = ""; return }
+    closeMenus()
+    if (Model.isInside(folder, path)) folder = to + folder.slice(path.length)
+    selectedKey = "folder|" + to
+    panel.focusKeys()
+  }
+
+  function createFolder(name) {
+    var path = store.createFolder(here === Model.SSH_CONFIG_FOLDER ? "" : here, name)
+    if (path === "") { folderError = store.lastError; store.lastError = ""; return }
+    addingFolder = false
+    folderError = ""
+    newFolderField.text = ""
+    selectedKey = "folder|" + path
+    panel.focusKeys()
+  }
+
+  function moveTo(c, path) {
+    store.moveToFolder(c.id, path)
+    closeMenus()
+    panel.focusKeys()
+  }
+
+  function moveToNewFolder(c, name) {
+    var path = store.createFolder(here === Model.SSH_CONFIG_FOLDER ? "" : here, name)
+    if (path === "") return
+    moveTo(c, path)
+  }
+
+  // New connection in the folder being shown (or from what was searched).
+  function newConnection() {
+    var seed = {}
+    if (here !== "" && here !== Model.SSH_CONFIG_FOLDER) seed.group = here
+    if (query.trim() !== "") {
+      seed.name = query.trim()
+      if (query.trim().indexOf(" ") < 0) seed.host = query.trim()
+    }
+    panel.openForm("new", seed)
+  }
+
+  function startNewFolder() {
+    closeMenus()
+    folderError = ""
+    addingFolder = true
+    Qt.callLater(function() { newFolderField.forceActiveFocus() })
+  }
+
+  // Esc peels one layer at a time, then climbs the folders; returns false
+  // when there's nothing left so the popup itself closes.
+  function handleEscape() {
+    if (passwordKey !== "" || pendingDeleteKey !== "" || moveKey !== "" || renameKey !== "" || menuKey !== "") {
+      var key = passwordKey || pendingDeleteKey || moveKey || renameKey || menuKey
+      closeMenus()
+      selectedKey = key
+      return true
+    }
+    if (addingFolder) { addingFolder = false; folderError = ""; return true }
+    if (searching) { searchField.text = ""; protoFilter = ""; return true }
+    return goUp()
   }
 
   // The row keyboard shortcuts act on: the open menu's, the keyboard
   // cursor's, or the one under the mouse.
-  readonly property string activeId: menuId !== "" ? menuId : (selectedId !== "" ? selectedId : hoveredId)
+  readonly property string activeKey: menuKey !== "" ? menuKey : (selectedKey !== "" ? selectedKey : hoveredKey)
 
-  function indexOfSelected() {
-    for (var i = 0; i < flatRows.length; i++) if (flatRows[i].id === activeId) return i
+  function indexOfActive() {
+    for (var i = 0; i < flatRows.length; i++) if (flatRows[i].key === activeKey) return i
     return -1
   }
 
-  function selected() {
-    var i = indexOfSelected()
+  function active() {
+    var i = indexOfActive()
     return i >= 0 ? flatRows[i] : null
   }
 
   function moveCursor(dy) {
     if (flatRows.length === 0) return
-    var i = indexOfSelected()
+    var i = indexOfActive()
     i = i < 0 ? (dy > 0 ? 0 : flatRows.length - 1) : Math.max(0, Math.min(flatRows.length - 1, i + dy))
-    selectedId = flatRows[i].id
-    hoveredId = ""
-    menuId = ""
+    var key = flatRows[i].key
+    closeMenus()
+    selectedKey = key
+  }
+
+  // → / l: into the folder under the cursor.
+  function enterCursor() {
+    var r = active()
+    if (r && r.kind === "folder") openFolder(r.item.path)
   }
 
   function activateCursor() {
-    var c = selected() || flatRows[0]
-    if (c) primaryAction(c)
+    var r = active() || flatRows[0]
+    if (!r) return
+    if (r.kind === "folder") openFolder(r.item.path)
+    else primaryAction(r.item, r.key)
   }
 
   function deleteCursor() {
-    var c = selected()
-    if (c && !Model.isSshConfigEntry(c)) { menuId = ""; pendingDeleteId = c.id }
+    var r = active()
+    if (!r || (r.kind === "folder" ? r.item.readOnly : Model.isSshConfigEntry(r.item))) return
+    closeMenus()
+    pendingDeleteKey = r.key
+    selectedKey = r.key
   }
 
   function textKey(t) {
-    var c = selected()
-    if (t === "/") searchField.forceActiveFocus()
-    else if (!c) return
-    else if (t === "e" && !Model.isSshConfigEntry(c)) panel.openForm(c.id, null)
-    else if (t === "f" && !Model.isSshConfigEntry(c)) store.toggleFavorite(c.id)
-    else if (t === "c") copyAddress(c)
-    else if (t === ".") toggleMenu(c.id)
+    if (t === "/") { searchField.forceActiveFocus(); return }
+    if (t === "\b") { goUp(); return }
+    if (t === "N") { startNewFolder(); return }
+    if (t === "n") { newConnection(); return }
+    var r = active()
+    if (!r) return
+    if (r.kind === "folder") {
+      if (r.item.readOnly) return
+      if (t === "e" || t === "r") startRename(r.key)
+      else if (t === ".") toggleMenu(r.key)
+      return
+    }
+    var c = r.item
+    var saved = !Model.isSshConfigEntry(c)
+    if (t === "e" && saved) panel.openForm(c.id, null)
+    else if (t === "m" && saved) startMove(r.key)
+    else if (t === "f" && saved) store.toggleFavorite(c.id)
+    else if (t === "c") copyAddress(c, r.key)
+    else if (t === ".") toggleMenu(r.key)
   }
+
+  // --- Connections ---
 
   function clientMissing(c) {
     return store.clientsChecked && !store.hasClient(c.protocol)
   }
 
-  function primaryAction(c) {
+  function primaryAction(c, key) {
     if (clientMissing(c)) {
       store.installClient(c.protocol)
       panel.close()
     } else if (store.needsPassword(c)) {
-      menuId = ""
-      pendingDeleteId = ""
+      closeMenus()
       rememberPassword = true
-      passwordFor = c.id
+      passwordKey = key
+      selectedKey = key
     } else if (store.connect(c.id)) {
       panel.close()
     }
@@ -138,23 +298,23 @@ Column {
   function connectWithPassword(c, user, password) {
     if (password === "") return
     var id = c.id
-    passwordFor = ""
+    passwordKey = ""
     store.connectWithPassword(id, user, password, rememberPassword, function(ok) {
       if (ok) panel.close()
     })
   }
 
-  function copyAddress(c) {
+  function copyAddress(c, key) {
     store.copyText(Model.isSshConfigEntry(c) ? c.host : Model.address(c))
-    copiedId = c.id
+    copiedId = key
     copiedTimer.restart()
   }
 
   function statusText(c) {
     var r = store.reachOf(c.id)
-    if (r.state === "up") return "● up · " + r.ms + " ms"
-    if (r.state === "down") return "● down"
-    if (r.state === "checking") return "● …"
+    if (r.state === "up") return r.ms + " ms"
+    if (r.state === "down") return "offline"
+    if (r.state === "checking") return "…"
     return c.jumpHost ? "via " + c.jumpHost : ""
   }
 
@@ -163,9 +323,12 @@ Column {
     return r.state === "up" ? panel.okColor : (r.state === "down" ? panel.urgent : panel.dim)
   }
 
-  function subtitle(c) {
+  function subtitle(c, showFolder) {
     if (clientMissing(c)) return "Needs " + Model.clientPackage(c.protocol) + " · " + Model.address(c)
-    return Model.subtitle(c) + (c.hasSecret ? " · 󰌾" : "")
+    if (Model.isSshConfigEntry(c)) return c.display
+    var parts = [Model.protocolLabel(c.protocol), Model.address(c)]
+    if (showFolder && c.group !== "") parts.push("󰉋 " + Model.folderLabel(c.group))
+    return parts.join(" · ") + (c.hasSecret ? " · 󰌾" : "")
   }
 
   Timer {
@@ -270,7 +433,7 @@ Column {
         MouseArea {
           anchors.fill: parent
           cursorShape: Qt.PointingHandCursor
-          onClicked: card.modelData.action === "new" ? panel.openForm("new", null) : panel.openSetup()
+          onClicked: card.modelData.action === "new" ? tab.newConnection() : panel.openSetup()
         }
       }
     }
@@ -426,48 +589,51 @@ Column {
   }
 
   // ===== Search + protocol chips =====
-  TextField {
-    id: searchField
-    visible: !tab.firstRun
-    width: parent.width
-    placeholderText: "Search name, host or user   /"
-    foreground: panel.foreground
-    accent: panel.accent
-    onTextChanged: {
-      tab.query = text
-      tab.selectedId = ""
-      tab.menuId = ""
-    }
-    onAccepted: tab.activateCursor()
-    Keys.onEscapePressed: {
-      if (text !== "") text = ""
-      else panel.focusKeys()
-    }
-    Keys.onDownPressed: tab.moveCursor(1)
-    Keys.onUpPressed: tab.moveCursor(-1)
-  }
-
   Row {
     visible: !tab.firstRun
+    width: parent.width
     spacing: Style.space(6)
-    Repeater {
-      model: [
-        { id: "", label: "All" },
-        { id: "ssh", label: "SSH" },
-        { id: "rdp", label: "RDP" },
-        { id: "vnc", label: "VNC" }
-      ]
-      delegate: Pill {
-        required property var modelData
-        readonly property int count: tab.counts[modelData.id === "" ? "all" : modelData.id] || 0
-        visible: modelData.id === "" || count > 0
-        text: modelData.label + " " + count
-        tint: tab.protoFilter === modelData.id ? panel.accent : panel.foreground
-        bold: tab.protoFilter === modelData.id
-        fontFamily: panel.fontFamily
-        onClicked: {
-          tab.protoFilter = modelData.id
-          tab.selectedId = ""
+
+    Field {
+      id: searchField
+      width: parent.width - (chips.visible ? chips.width + Style.space(6) : 0)
+      placeholderText: tab.here === "" ? "Search connections" : "Search all folders"
+      foreground: panel.foreground
+      accent: panel.accent
+      onTextChanged: {
+        tab.query = text
+        tab.closeMenus()
+      }
+      onAccepted: tab.activateCursor()
+      Keys.onEscapePressed: {
+        if (text !== "") text = ""
+        else panel.focusKeys()
+      }
+      Keys.onDownPressed: tab.moveCursor(1)
+      Keys.onUpPressed: tab.moveCursor(-1)
+    }
+
+    // Protocol filter, only when there's more than one to tell apart.
+    Row {
+      id: chips
+      visible: tab.protocolsInUse > 1
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(4)
+      Repeater {
+        model: ["ssh", "rdp", "vnc"]
+        delegate: Pill {
+          required property string modelData
+          readonly property bool on: tab.protoFilter === modelData
+          visible: (tab.counts[modelData] || 0) > 0
+          iconText: panel.protocolIcons[modelData]
+          tooltip: (on ? "Show everything" : "Only " + Model.protocolLabel(modelData)) + " · " + tab.counts[modelData]
+          tint: on ? panel.protocolColors[modelData] : panel.dim
+          filled: on
+          fontFamily: panel.fontFamily
+          onClicked: {
+            tab.closeMenus()
+            tab.protoFilter = on ? "" : modelData
+          }
         }
       }
     }
@@ -486,15 +652,109 @@ Column {
     onClicked: store.installPackages(store.missingPackages)
   }
 
-  Text {
-    visible: !tab.firstRun && tab.sections.length === 0
+  // ===== Where we are: All › Work › Servers =====
+  Row {
+    visible: !tab.firstRun && !tab.atTop
     width: parent.width
-    text: tab.query !== "" ? "Nothing matches “" + tab.query + "”. New connection (below) starts from it." : "No connections of this type."
+    spacing: Style.space(8)
+
+    Pill {
+      id: upBtn
+      anchors.verticalCenter: parent.verticalCenter
+      text: "←"
+      tooltip: "Up one folder (← or Backspace)"
+      tint: panel.foreground
+      fontFamily: panel.fontFamily
+      onClicked: tab.goUp()
+    }
+
+    Flow {
+      width: parent.width - upBtn.width - Style.space(8)
+      anchors.verticalCenter: parent.verticalCenter
+      spacing: Style.space(4)
+
+      Repeater {
+        model: tab.crumbs
+        delegate: Row {
+          id: crumb
+          required property var modelData
+          required property int index
+          readonly property bool last: index === tab.crumbs.length - 1
+          spacing: Style.space(4)
+
+          Text {
+            visible: crumb.index > 0
+            anchors.verticalCenter: parent.verticalCenter
+            text: "›"
+            color: panel.dim
+            font.family: panel.fontFamily
+            font.pixelSize: Style.font.body
+          }
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            text: crumb.index === 0 ? "󰋜" : crumb.modelData.name
+            textFormat: Text.PlainText
+            color: crumb.last ? panel.foreground : (crumbMouse.containsMouse ? panel.accent : panel.dim)
+            font.family: panel.fontFamily
+            font.pixelSize: crumb.last ? Style.font.title : Style.font.body
+            font.bold: crumb.last
+            font.underline: !crumb.last && crumbMouse.containsMouse
+            MouseArea {
+              id: crumbMouse
+              anchors.fill: parent
+              enabled: !crumb.last
+              hoverEnabled: true
+              cursorShape: Qt.PointingHandCursor
+              onClicked: tab.openFolder(crumb.modelData.path)
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ===== Empty =====
+  Text {
+    visible: !tab.firstRun && tab.searching && tab.sections.length === 0
+    width: parent.width
+    text: tab.query.trim() !== "" ? "Nothing matches “" + tab.query + "” in any folder. New connection (below) starts from it." : "No connections of this type."
     textFormat: Text.PlainText
     wrapMode: Text.Wrap
     color: panel.dim
     font.family: panel.fontFamily
     font.pixelSize: Style.font.caption
+  }
+
+  Column {
+    visible: !tab.firstRun && !tab.searching && tab.sections.length === 0
+    width: parent.width
+    topPadding: Style.space(12)
+    bottomPadding: Style.space(12)
+    spacing: Style.space(6)
+    Text {
+      anchors.horizontalCenter: parent.horizontalCenter
+      text: "󰉖"
+      color: Util.alpha(panel.folderColor, 0.6)
+      font.family: panel.fontFamily
+      font.pixelSize: Style.font.title * 2
+    }
+    Text {
+      width: parent.width
+      horizontalAlignment: Text.AlignHCenter
+      text: tab.here === "" ? "No connections yet." : "This folder is empty."
+      color: panel.foreground
+      font.family: panel.fontFamily
+      font.pixelSize: Style.font.body
+    }
+    Text {
+      width: parent.width
+      horizontalAlignment: Text.AlignHCenter
+      text: "Add a connection here, or bring one in from its ⋯ › Move to."
+      wrapMode: Text.Wrap
+      color: panel.dim
+      font.family: panel.fontFamily
+      font.pixelSize: Style.font.caption
+    }
   }
 
   // ===== Sections =====
@@ -507,348 +767,98 @@ Column {
       spacing: Style.space(2)
 
       PanelSectionHeader {
+        visible: section.modelData.title !== ""
         text: section.modelData.title
         foreground: panel.foreground
         fontFamily: panel.fontFamily
       }
 
       Repeater {
-        model: section.modelData.rows
-        delegate: Column {
-          id: rowItem
+        model: section.modelData.kind === "folder" ? section.modelData.rows : []
+        delegate: FolderRow {
           required property var modelData
-          readonly property var conn: modelData
-          readonly property bool fromConfig: Model.isSshConfigEntry(conn)
-          readonly property bool isSelected: tab.selectedId === conn.id || tab.hoveredId === conn.id
-          readonly property bool menuOpen: tab.menuId === conn.id
-          // The actions stay on screen while this row's menu is open, so its
-          // ✕ can always close it.
-          readonly property bool askingPassword: tab.passwordFor === conn.id
-          readonly property bool showActions: isSelected || menuOpen || askingPassword
-          readonly property bool missing: tab.clientMissing(conn)
           width: section.width
-          spacing: Style.space(4)
-
-          Rectangle {
-            width: parent.width
-            height: rowLine.implicitHeight + Style.space(14)
-            radius: Style.cornerRadius
-            color: rowItem.showActions ? Util.alpha(panel.accent, 0.12) : "transparent"
-            border.width: rowItem.showActions ? Style.normalBorderWidth : 0
-            border.color: Util.alpha(panel.accent, 0.35)
-
-            HoverHandler {
-              onHoveredChanged: {
-                if (hovered) {
-                  // While a menu is open, other rows don't light up.
-                  if ((tab.menuId !== "" && !rowItem.menuOpen) || (tab.passwordFor !== "" && !rowItem.askingPassword)) return
-                  tab.hoveredId = rowItem.conn.id
-                  tab.selectedId = ""
-                } else if (tab.hoveredId === rowItem.conn.id) {
-                  tab.hoveredId = ""
-                }
-              }
-            }
-
-            MouseArea {
-              anchors.fill: parent
-              cursorShape: Qt.PointingHandCursor
-              acceptedButtons: Qt.LeftButton | Qt.RightButton
-              onClicked: function(mouse) {
-                if (mouse.button === Qt.RightButton) {
-                  tab.toggleMenu(rowItem.conn.id)
-                } else if (tab.menuId !== "" && !rowItem.menuOpen) {
-                  // A menu is open elsewhere: this click just closes it.
-                  tab.menuId = ""
-                  tab.hoveredId = rowItem.conn.id
-                } else {
-                  tab.primaryAction(rowItem.conn)
-                }
-              }
-            }
-
-            Row {
-              id: rowLine
-              x: Style.space(8)
-              anchors.verticalCenter: parent.verticalCenter
-              width: parent.width - Style.space(16)
-              spacing: Style.space(10)
-
-              Rectangle {
-                id: tile
-                anchors.verticalCenter: parent.verticalCenter
-                width: Style.space(30)
-                height: width
-                radius: Style.cornerRadius
-                color: Util.alpha(panel.protocolColors[rowItem.conn.protocol], 0.14)
-                Text {
-                  anchors.centerIn: parent
-                  text: panel.protocolIcons[rowItem.conn.protocol] || ""
-                  color: panel.protocolColors[rowItem.conn.protocol]
-                  font.family: panel.fontFamily
-                  font.pixelSize: Style.font.body
-                }
-              }
-
-              Column {
-                width: parent.width - tile.width - rightSide.width - Style.space(20)
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Style.space(2)
-                Text {
-                  width: parent.width
-                  text: (rowItem.conn.favorite ? "★ " : "") + rowItem.conn.name
-                  textFormat: Text.PlainText
-                  elide: Text.ElideRight
-                  color: panel.foreground
-                  font.family: panel.fontFamily
-                  font.pixelSize: Style.font.body
-                }
-                Text {
-                  width: parent.width
-                  text: tab.subtitle(rowItem.conn)
-                  textFormat: Text.PlainText
-                  elide: Text.ElideRight
-                  color: rowItem.missing ? panel.warnColor : panel.dim
-                  font.family: panel.fontFamily
-                  font.pixelSize: Style.font.caption
-                }
-              }
-
-              Item {
-                id: rightSide
-                anchors.verticalCenter: parent.verticalCenter
-                width: rowItem.showActions ? actions.implicitWidth : status.implicitWidth
-                height: Math.max(actions.implicitHeight, status.implicitHeight)
-
-                Column {
-                  id: status
-                  visible: !rowItem.showActions
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(2)
-                  Text {
-                    anchors.right: parent.right
-                    text: tab.statusText(rowItem.conn)
-                    color: tab.statusColor(rowItem.conn)
-                    font.family: panel.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-                  Text {
-                    anchors.right: parent.right
-                    text: rowItem.fromConfig ? "ssh config" : Model.relativeTime(rowItem.conn.lastUsed, tab.now)
-                    color: panel.dim
-                    font.family: panel.fontFamily
-                    font.pixelSize: Style.font.caption
-                  }
-                }
-
-                Row {
-                  id: actions
-                  visible: rowItem.showActions
-                  anchors.right: parent.right
-                  anchors.verticalCenter: parent.verticalCenter
-                  spacing: Style.space(4)
-
-                  Pill {
-                    text: rowItem.menuOpen ? "✕" : "⋯"
-                    tooltip: rowItem.menuOpen ? "Close actions (Esc)" : "More actions (right-click, or .)"
-                    tint: rowItem.menuOpen ? panel.accent : panel.foreground
-                    fontFamily: panel.fontFamily
-                    onClicked: tab.toggleMenu(rowItem.conn.id)
-                  }
-                  Pill {
-                    filled: true
-                    tint: rowItem.missing ? panel.warnColor : panel.accent
-                    text: rowItem.missing ? "Install " + Model.clientPackage(rowItem.conn.protocol) : "Connect ↵"
-                    tooltip: rowItem.missing ? "Opens a review of the install command first" : ""
-                    fontFamily: panel.fontFamily
-                    onClicked: tab.primaryAction(rowItem.conn)
-                  }
-                }
-              }
-            }
-          }
-
-          // ⋯ actions
-          Flow {
-            visible: rowItem.menuOpen
-            width: parent.width
-            leftPadding: Style.space(48)
-            spacing: Style.space(6)
-
-            Pill {
-              visible: !rowItem.fromConfig
-              text: "Edit"
-              iconText: "󰏫"
-              tint: panel.foreground
-              fontFamily: panel.fontFamily
-              onClicked: panel.openForm(rowItem.conn.id, null)
-            }
-            Pill {
-              visible: rowItem.fromConfig
-              text: "Save as connection"
-              iconText: "󰆓"
-              tooltip: "Copy it into your saved connections to give it a group or make it a favorite"
-              tint: panel.foreground
-              fontFamily: panel.fontFamily
-              onClicked: panel.openForm("new", { name: rowItem.conn.name, host: rowItem.conn.host, protocol: "ssh" })
-            }
-            Pill {
-              visible: !rowItem.fromConfig
-              text: rowItem.conn.favorite ? "Unfavorite" : "Favorite"
-              iconText: rowItem.conn.favorite ? "󰓎" : "󰓒"
-              tint: panel.foreground
-              fontFamily: panel.fontFamily
-              onClicked: store.toggleFavorite(rowItem.conn.id)
-            }
-            Pill {
-              text: tab.copiedId === rowItem.conn.id ? "Copied" : "Copy address"
-              iconText: "󰆏"
-              tint: panel.foreground
-              fontFamily: panel.fontFamily
-              onClicked: tab.copyAddress(rowItem.conn)
-            }
-            Pill {
-              visible: !rowItem.fromConfig
-              text: "Duplicate"
-              iconText: "󰆑"
-              tint: panel.foreground
-              fontFamily: panel.fontFamily
-              onClicked: {
-                var copy = store.duplicate(rowItem.conn.id)
-                if (copy) panel.openForm(copy.id, null)
-              }
-            }
-            Pill {
-              visible: rowItem.conn.protocol === "ssh" && !rowItem.fromConfig && !rowItem.conn.jumpHost
-              text: "Log in with a key"
-              iconText: "󰌆"
-              tooltip: "Opens a terminal (it asks the server's password): ssh-keygen if you have no key, then ssh-copy-id"
-              tint: panel.foreground
-              enabled: !store.terminalBusy
-              fontFamily: panel.fontFamily
-              onClicked: store.setupSshKey(rowItem.conn)
-            }
-            Pill {
-              visible: !rowItem.fromConfig
-              text: "Delete"
-              iconText: "󰆴"
-              tint: panel.urgent
-              fontFamily: panel.fontFamily
-              onClicked: {
-                tab.menuId = ""
-                tab.pendingDeleteId = rowItem.conn.id
-              }
-            }
-          }
-
-          // Password prompt (RDP with no saved password)
-          Column {
-            visible: tab.passwordFor === rowItem.conn.id
-            width: parent.width
-            leftPadding: Style.space(48)
-            spacing: Style.space(6)
-            onVisibleChanged: {
-              if (!visible) { pwField.text = ""; return }
-              pwUser.text = rowItem.conn.user
-              Qt.callLater(function() { (rowItem.conn.user === "" ? pwUser : pwField).forceActiveFocus() })
-            }
-
-            Text {
-              width: parent.width - Style.space(48)
-              text: "Sign in to " + rowItem.conn.host + (rowItem.conn.rdp && rowItem.conn.rdp.domain ? " (domain " + rowItem.conn.rdp.domain + ")" : "")
-              textFormat: Text.PlainText
-              wrapMode: Text.Wrap
-              color: panel.foreground
-              font.family: panel.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-            TextField {
-              id: pwUser
-              width: parent.width - Style.space(48)
-              placeholderText: "User"
-              foreground: panel.foreground
-              accent: panel.accent
-              onAccepted: pwField.forceActiveFocus()
-              Keys.onEscapePressed: tab.passwordFor = ""
-            }
-            TextField {
-              id: pwField
-              width: parent.width - Style.space(48)
-              placeholderText: "Password"
-              password: true
-              foreground: panel.foreground
-              accent: panel.accent
-              onAccepted: tab.connectWithPassword(rowItem.conn, pwUser.text, text)
-              Keys.onEscapePressed: tab.passwordFor = ""
-            }
-            Toggle {
-              width: parent.width - Style.space(48)
-              label: "Remember in keyring"
-              description: tab.rememberPassword ? "Next time it connects without asking." : "Used once, then deleted."
-              checked: tab.rememberPassword
-              foreground: panel.foreground
-              accent: panel.accent
-              fontFamily: panel.fontFamily
-              onClicked: tab.rememberPassword = !tab.rememberPassword
-            }
-            Row {
-              spacing: Style.space(6)
-              Pill {
-                text: "Cancel"
-                tint: panel.foreground
-                fontFamily: panel.fontFamily
-                onClicked: tab.passwordFor = ""
-              }
-              Pill {
-                text: "Connect ↵"
-                filled: true
-                tint: panel.accent
-                enabled: pwField.text !== ""
-                fontFamily: panel.fontFamily
-                onClicked: tab.connectWithPassword(rowItem.conn, pwUser.text, pwField.text)
-              }
-            }
-          }
-
-          // Delete confirmation
-          Row {
-            visible: tab.pendingDeleteId === rowItem.conn.id
-            width: parent.width
-            leftPadding: Style.space(48)
-            spacing: Style.space(6)
-
-            Text {
-              width: parent.width - Style.space(48) - keepBtn.width - deleteBtn.width - Style.space(12)
-              anchors.verticalCenter: parent.verticalCenter
-              text: "Delete “" + rowItem.conn.name + "”?" + (rowItem.conn.hasSecret ? " Its password leaves the keyring too." : "")
-              textFormat: Text.PlainText
-              wrapMode: Text.Wrap
-              color: panel.foreground
-              font.family: panel.fontFamily
-              font.pixelSize: Style.font.caption
-            }
-            Pill {
-              id: keepBtn
-              text: "Keep"
-              tint: panel.foreground
-              fontFamily: panel.fontFamily
-              onClicked: tab.pendingDeleteId = ""
-            }
-            Pill {
-              id: deleteBtn
-              text: "Delete"
-              filled: true
-              tint: panel.urgent
-              fontFamily: panel.fontFamily
-              onClicked: {
-                store.remove(rowItem.conn.id)
-                tab.pendingDeleteId = ""
-              }
-            }
-          }
+          view: tab
+          panel: tab.panel
+          store: tab.store
+          folder: modelData
+          rowKey: tab.rowKey(section.modelData, modelData)
         }
       }
+
+      Repeater {
+        model: section.modelData.kind === "connection" ? section.modelData.rows : []
+        delegate: ConnectionRow {
+          required property var modelData
+          width: section.width
+          view: tab
+          panel: tab.panel
+          store: tab.store
+          conn: modelData
+          rowKey: tab.rowKey(section.modelData, modelData)
+          showFolder: section.modelData.id !== "here"
+        }
+      }
+    }
+  }
+
+  // ===== New folder (inline) =====
+  Column {
+    visible: tab.addingFolder
+    width: parent.width
+    spacing: Style.space(6)
+
+    Row {
+      width: parent.width
+      spacing: Style.space(6)
+      Field {
+        id: newFolderField
+        width: parent.width - createFolderBtn.width - cancelFolderBtn.width - Style.space(12)
+        placeholderText: tab.here === "" || tab.here === Model.SSH_CONFIG_FOLDER
+          ? "New folder name"
+          : "New folder in " + Model.folderName(tab.here)
+        foreground: panel.foreground
+        accent: panel.accent
+        onTextChanged: tab.folderError = ""
+        onAccepted: tab.createFolder(text)
+        Keys.onEscapePressed: {
+          text = ""
+          tab.addingFolder = false
+          panel.focusKeys()
+        }
+      }
+      Pill {
+        id: cancelFolderBtn
+        anchors.verticalCenter: parent.verticalCenter
+        text: "Cancel"
+        tint: panel.foreground
+        fontFamily: panel.fontFamily
+        onClicked: {
+          newFolderField.text = ""
+          tab.addingFolder = false
+          panel.focusKeys()
+        }
+      }
+      Pill {
+        id: createFolderBtn
+        anchors.verticalCenter: parent.verticalCenter
+        text: "Create"
+        filled: true
+        tint: panel.accent
+        enabled: newFolderField.text.trim() !== ""
+        fontFamily: panel.fontFamily
+        onClicked: tab.createFolder(newFolderField.text)
+      }
+    }
+    Text {
+      visible: tab.folderError !== "" && tab.renameKey === ""
+      width: parent.width
+      text: tab.folderError
+      textFormat: Text.PlainText
+      wrapMode: Text.Wrap
+      color: panel.urgent
+      font.family: panel.fontFamily
+      font.pixelSize: Style.font.caption
     }
   }
 
@@ -860,22 +870,38 @@ Column {
     color: Util.alpha(panel.foreground, 0.08)
   }
 
-  Pill {
+  Row {
     visible: !tab.firstRun
     width: parent.width
-    iconText: "󰐕"
-    text: "New connection"
-    tint: panel.accent
-    enabled: store.writable
-    fontFamily: panel.fontFamily
-    onClicked: panel.openForm("new", tab.query !== "" ? { name: tab.query, host: tab.query.indexOf(" ") < 0 ? tab.query : "" } : null)
+    spacing: Style.space(6)
+
+    Pill {
+      width: (parent.width - Style.space(6)) * 0.6
+      iconText: "󰐕"
+      text: "New connection"
+      tooltip: tab.here !== "" && tab.here !== Model.SSH_CONFIG_FOLDER ? "In " + Model.folderLabel(tab.here) + " (n)" : "n"
+      tint: panel.accent
+      enabled: store.writable
+      fontFamily: panel.fontFamily
+      onClicked: tab.newConnection()
+    }
+    Pill {
+      width: (parent.width - Style.space(6)) * 0.4
+      iconText: "󰉗"
+      text: "New folder"
+      tooltip: (tab.here !== "" && tab.here !== Model.SSH_CONFIG_FOLDER ? "Inside " + Model.folderLabel(tab.here) : "At the top level") + " (Shift+N)"
+      tint: panel.foreground
+      enabled: store.writable && tab.here !== Model.SSH_CONFIG_FOLDER
+      fontFamily: panel.fontFamily
+      onClicked: tab.startNewFolder()
+    }
   }
 
   Text {
     visible: !tab.firstRun
     width: parent.width
     horizontalAlignment: Text.AlignHCenter
-    text: "↑↓ select · ↵ connect · e edit · f favorite · c copy · x delete · n new"
+    text: "↑↓ move · ↵ open · ← back · / search · m move · n new"
     wrapMode: Text.Wrap
     color: panel.dim
     font.family: panel.fontFamily

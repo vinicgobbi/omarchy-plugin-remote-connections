@@ -26,6 +26,7 @@ Panel {
   property var themeColors: ({})
   readonly property color okColor: themeColors.green || Qt.lighter(accent, 1.1)
   readonly property color warnColor: themeColors.yellow || Qt.lighter(urgent, 1.4)
+  readonly property color folderColor: themeColors.yellow || accent
   readonly property var protocolColors: ({
     ssh: accent,
     rdp: themeColors.blue || accent,
@@ -159,6 +160,13 @@ Panel {
     PanelKeyCatcher {
       id: keys
       anchors.fill: parent
+      // While a text field has the focus, its keys are its own: a TextField
+      // lets Return through after `accepted`, which would otherwise also
+      // open/connect whatever row has the cursor.
+      blocked: {
+        var f = Window.activeFocusItem
+        return f !== null && f !== undefined && f.cursorPosition !== undefined && f.selectByMouse !== undefined
+      }
       onCloseRequested: {
         if (root.formOpen) root.closeForm()
         else if (root.setupOpen) root.setupOpen = false
@@ -166,14 +174,15 @@ Panel {
       }
       onTabRequested: function(direction) { root.switchPanel(direction) }
       onMoveRequested: function(dx, dy) {
-        if (!root.takeover && dy !== 0) connectTab.moveCursor(dy)
+        if (root.takeover) return
+        if (dy !== 0) connectTab.moveCursor(dy)
+        else if (dx > 0) connectTab.enterCursor()
+        else if (dx < 0) connectTab.goUp()
       }
       onActivateRequested: if (!root.takeover) connectTab.activateCursor()
       onDeleteRequested: if (!root.takeover) connectTab.deleteCursor()
       onTextKey: function(t) {
-        if (root.takeover) return
-        if (t === "n" || t === "N") root.openForm("new", null)
-        else connectTab.textKey(t)
+        if (!root.takeover) connectTab.textKey(t)
       }
 
       Flickable {

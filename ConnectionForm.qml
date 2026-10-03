@@ -5,8 +5,8 @@ import "Model.js" as Model
 
 // Add/edit form. Takes over the popup while panel.formId is set ("new" or a
 // connection id; panel.formSeed prefills a new one). Labeled fields, a Test
-// button that checks the port answers, key or password sign-in, groups as
-// chips, and the rarely needed options folded under Advanced.
+// button that checks the port answers, key or password sign-in, a folder
+// picker, and the rarely needed options folded under Advanced.
 Column {
   id: form
 
@@ -36,13 +36,14 @@ Column {
 
   property bool showAdvanced: false
   property bool addingGroup: false
+  property bool pickingFolder: false
   property string error: ""
 
   spacing: Style.space(10)
 
-  readonly property var groupChoices: {
-    var list = Model.groups(store.connections)
-    if (dGroup !== "" && list.indexOf(dGroup) < 0) list = list.concat([dGroup])
+  readonly property var folderChoices: {
+    var list = store.allFolders
+    if (dGroup !== "" && list.indexOf(dGroup) < 0) list = Model.normalizeFolders(list.concat([dGroup]))
     return list
   }
   readonly property int effectivePort: {
@@ -62,7 +63,7 @@ Column {
     dPort = c && d.port !== Model.defaultPort(d.protocol) ? String(d.port) : ""
     dUser = d.user
     dName = c ? d.name : (seed.name || "")
-    dGroup = d.group
+    dGroup = c ? d.group : Model.folderPath(seed.group || "")
     dFavorite = d.favorite
     dIdentity = d.identityFile
     dJump = d.jumpHost
@@ -77,6 +78,7 @@ Column {
     showAdvanced = dJump !== "" || dDomain !== "" || dMultimon || dViewOnly || !dClipboard || dGrabKeyboard || !dConnectionBar
       || (dIdentity !== "" && store.sshKeys.indexOf(dIdentity) < 0)
     addingGroup = false
+    pickingFolder = false
     error = ""
     Qt.callLater(function() { hostField.forceActiveFocus() })
   }
@@ -267,7 +269,7 @@ Column {
   Row {
     width: parent.width
     spacing: Style.space(6)
-    TextField {
+    Field {
       id: hostField
       width: parent.width - testBtn.width - Style.space(6)
       placeholderText: "192.168.0.10 or server.example.com"
@@ -312,7 +314,7 @@ Column {
       width: (parent.width - Style.space(8)) * 0.62
       spacing: Style.space(4)
       Label { text: "User" }
-      TextField {
+      Field {
         width: parent.width
         placeholderText: form.dProtocol === "ssh" ? "same as here" : "optional"
         text: form.dUser
@@ -327,7 +329,7 @@ Column {
       width: (parent.width - Style.space(8)) * 0.38
       spacing: Style.space(4)
       Label { text: "Port" }
-      TextField {
+      Field {
         width: parent.width
         placeholderText: String(Model.defaultPort(form.dProtocol))
         text: form.dPort
@@ -342,7 +344,7 @@ Column {
   }
 
   Label { text: "Name" }
-  TextField {
+  Field {
     width: parent.width
     placeholderText: form.dHost !== "" ? form.dHost : "defaults to the host"
     text: form.dName
@@ -403,7 +405,7 @@ Column {
     visible: form.dProtocol !== "ssh"
     width: parent.width
     spacing: Style.space(6)
-    TextField {
+    Field {
       visible: !form.dForgetPassword
       width: parent.width
       password: true
@@ -432,61 +434,127 @@ Column {
   }
 
   // ===== Organize =====
-  SubHeader { text: "ORGANIZE" }
-  Flow {
-    width: parent.width
-    spacing: Style.space(6)
+  SubHeader { text: "FOLDER" }
 
-    Pill {
-      text: "No group"
-      tint: form.dGroup === "" ? panel.accent : panel.foreground
-      bold: form.dGroup === ""
-      fontFamily: panel.fontFamily
-      onClicked: form.dGroup = ""
+  // Where it's going: one line, with the full list folded away.
+  Rectangle {
+    width: parent.width
+    height: folderLine.implicitHeight + Style.space(14)
+    radius: Style.cornerRadius
+    color: folderMouse.containsMouse ? Util.alpha(panel.foreground, 0.04) : "transparent"
+    border.width: Style.normalBorderWidth
+    border.color: form.pickingFolder ? Util.alpha(panel.accent, 0.6) : Util.alpha(panel.foreground, 0.12)
+    Row {
+      id: folderLine
+      x: Style.space(10)
+      anchors.verticalCenter: parent.verticalCenter
+      width: parent.width - Style.space(20)
+      spacing: Style.space(8)
+      Text {
+        id: folderGlyph
+        anchors.verticalCenter: parent.verticalCenter
+        text: form.dGroup === "" ? "󰋜" : "󰉋"
+        color: form.dGroup === "" ? panel.dim : panel.folderColor
+        font.family: panel.fontFamily
+        font.pixelSize: Style.font.body
+      }
+      Text {
+        width: parent.width - folderGlyph.width - changeText.width - Style.space(16)
+        anchors.verticalCenter: parent.verticalCenter
+        text: form.dGroup === "" ? "Top level (no folder)" : Model.folderLabel(form.dGroup)
+        textFormat: Text.PlainText
+        elide: Text.ElideLeft
+        color: panel.foreground
+        font.family: panel.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+      Text {
+        id: changeText
+        anchors.verticalCenter: parent.verticalCenter
+        text: form.pickingFolder ? "Done ▴" : "Change ▾"
+        color: panel.accent
+        font.family: panel.fontFamily
+        font.pixelSize: Style.font.caption
+      }
+    }
+    MouseArea {
+      id: folderMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: form.pickingFolder = !form.pickingFolder
+    }
+  }
+
+  // Folder tree: one line per folder, indented by depth.
+  Column {
+    visible: form.pickingFolder
+    width: parent.width
+    spacing: Style.space(4)
+
+    Choice {
+      width: parent.width
+      text: "󰋜  Top level"
+      on: form.dGroup === ""
+      onPicked: form.dGroup = ""
     }
     Repeater {
-      model: form.groupChoices
-      delegate: Pill {
+      model: form.folderChoices
+      delegate: Item {
+        id: folderChoice
         required property string modelData
-        text: modelData
-        tint: form.dGroup === modelData ? panel.accent : panel.foreground
-        bold: form.dGroup === modelData
+        readonly property int depth: modelData.split("/").length - 1
+        width: form.width
+        height: folderPick.height
+        Choice {
+          id: folderPick
+          x: Style.space(16) * folderChoice.depth
+          width: parent.width - x
+          text: "󰉋  " + Model.folderName(folderChoice.modelData)
+          on: form.dGroup === folderChoice.modelData
+          onPicked: form.dGroup = folderChoice.modelData
+        }
+      }
+    }
+
+    Row {
+      width: parent.width
+      spacing: Style.space(6)
+      Pill {
+        visible: !form.addingGroup
+        text: "+ New folder" + (form.dGroup !== "" ? " in " + Model.folderName(form.dGroup) : "")
+        tint: panel.dim
         fontFamily: panel.fontFamily
-        onClicked: form.dGroup = modelData
+        onClicked: {
+          form.addingGroup = true
+          Qt.callLater(function() { groupField.forceActiveFocus() })
+        }
       }
-    }
-    Pill {
-      visible: !form.addingGroup
-      text: "+ New group"
-      tint: panel.dim
-      fontFamily: panel.fontFamily
-      onClicked: {
-        form.addingGroup = true
-        Qt.callLater(function() { groupField.forceActiveFocus() })
-      }
-    }
-    TextField {
-      id: groupField
-      visible: form.addingGroup
-      width: Style.space(140)
-      placeholderText: "Group name"
-      foreground: panel.foreground
-      accent: panel.accent
-      onAccepted: {
-        if (text.trim() !== "") form.dGroup = text.trim()
-        text = ""
-        form.addingGroup = false
-      }
-      Keys.onEscapePressed: {
-        text = ""
-        form.addingGroup = false
+      Field {
+        id: groupField
+        visible: form.addingGroup
+        width: parent.width
+        placeholderText: form.dGroup !== "" ? "Folder name, inside " + Model.folderName(form.dGroup) : "Folder name"
+        foreground: panel.foreground
+        accent: panel.accent
+        onAccepted: {
+          var name = text.trim().replace(/\//g, " ")
+          if (name !== "") form.dGroup = Model.folderPath(form.dGroup + "/" + name)
+          text = ""
+          form.addingGroup = false
+        }
+        Keys.onEscapePressed: {
+          text = ""
+          form.addingGroup = false
+        }
       }
     }
   }
+
   Toggle {
     width: parent.width
     label: "Favorite"
-    description: "Keep it at the top of the list"
+    description: "Also list it under Favorites, at the top"
     checked: form.dFavorite
     foreground: panel.foreground
     accent: panel.accent
@@ -510,7 +578,7 @@ Column {
     spacing: Style.space(6)
 
     Label { visible: form.dProtocol === "ssh"; text: "Jump host" }
-    TextField {
+    Field {
       visible: form.dProtocol === "ssh"
       width: parent.width
       placeholderText: "user@bastion (ssh -J)"
@@ -521,7 +589,7 @@ Column {
       Keys.onEscapePressed: panel.closeForm()
     }
     Label { visible: form.dProtocol === "ssh"; text: "Key file (if it isn't listed above)" }
-    TextField {
+    Field {
       visible: form.dProtocol === "ssh"
       width: parent.width
       placeholderText: "~/.ssh/work_key"
@@ -533,7 +601,7 @@ Column {
     }
 
     Label { visible: form.dProtocol === "rdp"; text: "Domain" }
-    TextField {
+    Field {
       visible: form.dProtocol === "rdp"
       width: parent.width
       placeholderText: "optional"

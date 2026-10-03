@@ -14,6 +14,10 @@ Item {
   readonly property string filePath: configDir + "/connections.json"
 
   property var connections: []
+  // Folders saved on their own (so an empty one survives); the full list
+  // also has every folder a connection lives in, see Model.allFolders.
+  property var folders: []
+  readonly property var allFolders: Model.allFolders(connections, folders)
   property bool loaded: false
   // A connections.json that failed to parse is never overwritten: the user
   // gets the error and their file stays as it was.
@@ -61,14 +65,50 @@ Item {
     return null
   }
 
-  function save(next) {
+  function save(next, nextFolders) {
     if (!writable) {
       lastError = "connections.json has errors; fix or remove it before saving changes."
       return false
     }
+    if (nextFolders !== undefined) folders = nextFolders
     connections = next
-    file.setText(Model.serialize(next))
+    file.setText(Model.serialize(next, folders))
     return true
+  }
+
+  // --- Folders ---
+
+  // Creates `name` inside `parent`. Returns its path, or "" (error in lastError).
+  function createFolder(parent, name) {
+    var err = Model.validateFolderName(name, parent, allFolders, "")
+    if (err !== "") { lastError = err; return "" }
+    var path = Model.folderPath(parent + "/" + name)
+    if (!save(connections, Model.normalizeFolders(folders.concat([path])))) return ""
+    lastError = ""
+    return path
+  }
+
+  // Renames the last segment of `path`. Returns the new path, or "".
+  function renameFolder(path, name) {
+    var parent = Model.parentFolder(path)
+    var err = Model.validateFolderName(name, parent, allFolders, path)
+    if (err !== "") { lastError = err; return "" }
+    var to = Model.folderPath(parent + "/" + name)
+    // Kept on its own too, so renaming an emptied folder doesn't lose it.
+    var r = Model.moveFolder(connections, folders.concat([path]), path, to)
+    if (!save(r.connections, r.folders)) return ""
+    lastError = ""
+    return to
+  }
+
+  // Deletes the folder only: what's inside moves up one level.
+  function deleteFolder(path) {
+    var r = Model.removeFolder(connections, folders, path)
+    save(r.connections, r.folders)
+  }
+
+  function moveToFolder(id, path) {
+    setField(id, "group", Model.folderPath(path))
   }
 
   // Inserts or replaces by id. Returns the stored (normalized) connection.
@@ -368,6 +408,7 @@ Item {
     onLoaded: {
       var r = Model.parseList(text())
       root.connections = r.connections
+      root.folders = r.folders
       root.writable = r.ok
       root.lastError = r.error
       root.loaded = true
@@ -375,6 +416,7 @@ Item {
     onLoadFailed: {
       // Missing file: first run, nothing saved yet.
       root.connections = []
+      root.folders = []
       root.writable = true
       root.loaded = true
     }

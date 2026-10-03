@@ -6,25 +6,34 @@ Passwords live in the GNOME keyring, never in a plain file.
 
 ## What it does
 
-- **One place for every connection.** The bar icon's popup lists them in
-  sections — *Recent*, *Favorites*, your groups, and hosts from
-  `~/.ssh/config` — with search (`/`) and SSH/RDP/VNC filters. Each row shows
-  whether the server answers (a quick TCP check of its port) and when you
-  last used it.
+- **One place for every connection, in folders.** The bar icon's popup works
+  like a file manager: the top level has *Favorites* and *Recent*, then your
+  folders and the connections that aren't in any. Click a folder (or `→`/`↵`)
+  to open it; the breadcrumb (`All › Work › Servers`) and `←`/Backspace/Esc
+  take you back up. Folders can hold folders, show what's inside (how many
+  connections, which protocols), and are created with **New folder**
+  (`Shift+N`) right where you are; `⋯` on a folder renames or deletes it —
+  deleting a folder never deletes a connection, what's inside moves up one
+  level. Search (`/`) looks in every folder at once, with SSH/RDP/VNC
+  filters. Each connection shows whether the server answers (a dot on its
+  icon, from a quick TCP check of its port) and when you last used it.
 - **One click to connect.** The row under the mouse (or picked with `↑`/`↓`)
-  shows **Connect**; `⋯` (or right-click) has Edit, Favorite, Copy address,
-  Duplicate, *Log in with a key* and Delete. Keys: `↵` connect, `e` edit,
-  `f` favorite, `c` copy, `x` delete, `n` new.
+  shows **Connect**; `⋯` (or right-click) has Edit, *Move to…* (another
+  folder, or a new one), Favorite, Copy address, Duplicate, *Log in with a
+  key* and Delete. Keys: `↵` connect, `e` edit, `m` move, `f` favorite,
+  `c` copy, `x` delete, `n` new connection (in the folder you're in).
 - **Quick connect** from the keyboard: a centered launcher (like the emoji
   picker) where you type part of a name/host and hit Enter. Recently used
   connections come first. See [Keyboard shortcut](#keyboard-shortcut).
 - **Hosts from `~/.ssh/config`** show up automatically (including files it
   `Include`s; wildcard entries are skipped). They connect with `ssh <alias>`,
-  so all your ssh settings apply. The plugin only reads that file — use
-  *Save as connection* on one to give it a group or make it a favorite.
+  so all your ssh settings apply. They live in a read-only *~/.ssh/config*
+  folder; the plugin only reads that file — use *Save as connection* on one
+  to put it in a folder or make it a favorite.
 - **New / edit connection** form: labeled fields, a **Test** button that
   checks the port answers (and shows the server's greeting, e.g. its SSH
-  version), groups as chips, advanced options folded away:
+  version), a folder picker (with *New folder* inside the one picked),
+  advanced options folded away:
   - **SSH**: pick one of your keys (or automatic), jump host (`-J`), and
     *Create a key and copy it to this server* (ssh-keygen + ssh-copy-id, in a
     terminal since it asks the server's password). Opens in your terminal; if
@@ -154,7 +163,7 @@ never does them silently. Here's what to expect:
 
 | What | Where |
 |---|---|
-| Connections | `~/.config/omarchy/remote-connections/connections.json` (no passwords) |
+| Connections and folders | `~/.config/omarchy/remote-connections/connections.json` (no passwords). A connection's `group` is its folder path, one level per `/` (`"Work/Servers"`); `folders` keeps the ones with nothing in them yet |
 | `~/.ssh/config` hosts | Read from `~/.ssh/config` every time the popup/launcher opens; never written |
 | RDP/VNC passwords | GNOME keyring, under *Remote connection: &lt;name&gt;* (`service=omarchy-remote-connections`); a password used once waits there under a one-time id and is deleted as soon as the client gets it |
 | Last client output (for troubleshooting) | `~/.local/state/omarchy-remote-connections/last-<protocol>.log` |
