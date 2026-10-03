@@ -21,7 +21,7 @@ Column {
   readonly property bool menuOpen: view.menuKey === rowKey
   readonly property bool renaming: view.renameKey === rowKey
   readonly property bool confirmingDelete: view.pendingDeleteKey === rowKey
-  readonly property bool lit: isSelected || menuOpen || renaming
+  readonly property bool lit: isSelected || menuOpen || renaming || confirmingDelete
 
   readonly property string summary: {
     if (readOnly) return folder.count + (folder.count === 1 ? " host" : " hosts") + " · read-only"
@@ -32,7 +32,12 @@ Column {
   }
 
   spacing: Style.space(4)
-  z: menuOpen ? 10 : 0
+
+  // ↑/↓ landed here: keep it on screen when the list scrolls.
+  readonly property bool hasKeyboardCursor: view.selectedKey === rowKey
+  onHasKeyboardCursorChanged: if (hasKeyboardCursor) Qt.callLater(function() { view.reveal(row) })
+
+  z: menuOpen || renaming || confirmingDelete ? 10 : 0
 
   Rectangle {
     width: parent.width
@@ -64,6 +69,85 @@ Column {
             view.closeMenus()
             view.pendingDeleteKey = row.rowKey
             view.selectedKey = row.rowKey
+          }
+        }
+      }
+
+      // Why the new name didn't work.
+      Popover {
+        visible: row.renaming && view.folderError !== ""
+        y: parent.height
+        width: parent.width
+        cardWidth: Style.space(270)
+        padding: Style.space(10)
+        panel: row.panel
+        bounds: view
+        onOverflowChanged: if (visible) view.menuOverflow = overflow
+        Text {
+          width: parent.width
+          text: view.folderError
+          textFormat: Text.PlainText
+          wrapMode: Text.Wrap
+          color: panel.urgent
+          font.family: panel.fontFamily
+          font.pixelSize: Style.font.caption
+        }
+      }
+
+      // Delete confirmation: only the folder goes, never a connection.
+      Popover {
+        visible: row.confirmingDelete
+        y: parent.height
+        width: parent.width
+        cardWidth: Style.space(280)
+        padding: Style.space(12)
+        panel: row.panel
+        bounds: view
+        onOverflowChanged: if (visible) view.menuOverflow = overflow
+
+        Column {
+          width: parent.width
+          spacing: Style.space(10)
+          Text {
+            width: parent.width
+            text: "Delete the folder “" + row.folder.name + "”?"
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            color: panel.foreground
+            font.family: panel.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+          Text {
+            width: parent.width
+            text: row.folder.count + row.folder.folders > 0
+              ? "What's in it moves to " + (Model.parentFolder(row.folder.path) === "" ? "the top level" : "“" + Model.folderName(Model.parentFolder(row.folder.path)) + "”") + ". No connection is deleted."
+              : "It's empty, nothing else changes."
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            color: panel.dim
+            font.family: panel.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+          Row {
+            anchors.right: parent.right
+            spacing: Style.space(6)
+            Pill {
+              text: "Keep"
+              tint: panel.foreground
+              fontFamily: panel.fontFamily
+              onClicked: view.pendingDeleteKey = ""
+            }
+            Pill {
+              text: "Delete folder"
+              filled: true
+              tint: panel.urgent
+              fontFamily: panel.fontFamily
+              onClicked: {
+                store.deleteFolder(row.folder.path)
+                view.pendingDeleteKey = ""
+              }
+            }
           }
         }
       }
@@ -233,58 +317,6 @@ Column {
             font.pixelSize: Style.font.title
           }
         }
-      }
-    }
-  }
-
-  Text {
-    visible: row.renaming && view.folderError !== ""
-    width: parent.width
-    leftPadding: Style.space(48)
-    text: view.folderError
-    textFormat: Text.PlainText
-    wrapMode: Text.Wrap
-    color: panel.urgent
-    font.family: panel.fontFamily
-    font.pixelSize: Style.font.caption
-  }
-
-  // Delete confirmation: only the folder goes, never a connection.
-  Row {
-    visible: row.confirmingDelete
-    width: parent.width
-    leftPadding: Style.space(48)
-    spacing: Style.space(6)
-
-    Text {
-      width: parent.width - Style.space(48) - keepBtn.width - deleteBtn.width - Style.space(12)
-      anchors.verticalCenter: parent.verticalCenter
-      text: "Delete the folder “" + row.folder.name + "”?"
-        + (row.folder.count + row.folder.folders > 0
-          ? " What's in it moves to " + (Model.parentFolder(row.folder.path) === "" ? "the top level" : "“" + Model.folderName(Model.parentFolder(row.folder.path)) + "”") + "; no connection is deleted."
-          : "")
-      textFormat: Text.PlainText
-      wrapMode: Text.Wrap
-      color: panel.foreground
-      font.family: panel.fontFamily
-      font.pixelSize: Style.font.caption
-    }
-    Pill {
-      id: keepBtn
-      text: "Keep"
-      tint: panel.foreground
-      fontFamily: panel.fontFamily
-      onClicked: view.pendingDeleteKey = ""
-    }
-    Pill {
-      id: deleteBtn
-      text: "Delete"
-      filled: true
-      tint: panel.urgent
-      fontFamily: panel.fontFamily
-      onClicked: {
-        store.deleteFolder(row.folder.path)
-        view.pendingDeleteKey = ""
       }
     }
   }

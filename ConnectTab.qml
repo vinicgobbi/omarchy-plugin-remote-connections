@@ -36,8 +36,8 @@ Column {
   property string passwordKey: ""
   property bool rememberPassword: true
   property bool addingFolder: false
-  // How far the open ⋯ menu sticks out below the list; the popup grows by
-  // that much so the floating menu is never cut off.
+  // How far the open popover (⋯ menu, Move to…) sticks out below the list;
+  // the popup grows by that much so it's never cut off.
   property real menuOverflow: 0
   property string folderError: ""
   property string copiedId: ""
@@ -72,7 +72,15 @@ Column {
 
   spacing: Style.space(10)
 
-  onMenuKeyChanged: if (menuKey === "") menuOverflow = 0
+  // The row with something floating under it (⋯ menu, Move to, password,
+  // delete confirmation, a rename error).
+  readonly property string popoverKey: menuKey || moveKey || passwordKey || pendingDeleteKey || renameKey
+  onPopoverKeyChanged: if (popoverKey === "") menuOverflow = 0
+
+  // Scrolls the list to show `item` (see BarWidget.reveal).
+  function reveal(item) {
+    panel.reveal(item)
+  }
 
   function rowKey(section, item) {
     return section.kind === "folder" ? "folder|" + item.path : section.id + "|" + item.id
@@ -235,6 +243,9 @@ Column {
     var key = flatRows[i].key
     closeMenus()
     selectedKey = key
+    // Back at the first row: show the top of the list (its section header
+    // and the open sessions above it) too.
+    if (i === 0 && flickable) flickable.contentY = 0
   }
 
   // → / l: into the folder under the cursor.
@@ -593,51 +604,120 @@ Column {
     }
   }
 
-  // ===== Search + protocol chips =====
-  Row {
-    visible: !tab.firstRun
-    width: parent.width
-    spacing: Style.space(6)
+  // ===== Pinned on top of the list (BarWidget's top strip) =====
+  Column {
+    parent: panel.topSlot
+    width: parent ? parent.width : 0
+    visible: tab.visible && !tab.firstRun
+    spacing: Style.space(10)
 
-    Field {
-      id: searchField
-      width: parent.width - (chips.visible ? chips.width + Style.space(6) : 0)
-      placeholderText: tab.here === "" ? "Search connections" : "Search all folders"
-      foreground: panel.foreground
-      accent: panel.accent
-      onTextChanged: {
-        tab.query = text
-        tab.closeMenus()
+    // ===== Search + protocol chips =====
+    Row {
+      visible: !tab.firstRun
+      width: parent.width
+      spacing: Style.space(6)
+
+      Field {
+        id: searchField
+        width: parent.width - (chips.visible ? chips.width + Style.space(6) : 0)
+        placeholderText: tab.here === "" ? "Search connections" : "Search all folders"
+        foreground: panel.foreground
+        accent: panel.accent
+        onTextChanged: {
+          tab.query = text
+          tab.closeMenus()
+        }
+        onAccepted: tab.activateCursor()
+        Keys.onEscapePressed: {
+          if (text !== "") text = ""
+          else panel.focusKeys()
+        }
+        Keys.onDownPressed: tab.moveCursor(1)
+        Keys.onUpPressed: tab.moveCursor(-1)
       }
-      onAccepted: tab.activateCursor()
-      Keys.onEscapePressed: {
-        if (text !== "") text = ""
-        else panel.focusKeys()
+
+      // Protocol filter, only when there's more than one to tell apart.
+      Row {
+        id: chips
+        visible: tab.protocolsInUse > 1
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.space(4)
+        Repeater {
+          model: ["ssh", "rdp", "vnc"]
+          delegate: Pill {
+            required property string modelData
+            readonly property bool on: tab.protoFilter === modelData
+            visible: (tab.counts[modelData] || 0) > 0
+            iconText: panel.protocolIcons[modelData]
+            tooltip: (on ? "Show everything" : "Only " + Model.protocolLabel(modelData)) + " · " + tab.counts[modelData]
+            tint: on ? panel.protocolColors[modelData] : panel.dim
+            filled: on
+            fontFamily: panel.fontFamily
+            onClicked: {
+              tab.closeMenus()
+              tab.protoFilter = on ? "" : modelData
+            }
+          }
+        }
       }
-      Keys.onDownPressed: tab.moveCursor(1)
-      Keys.onUpPressed: tab.moveCursor(-1)
     }
 
-    // Protocol filter, only when there's more than one to tell apart.
+    // ===== Where we are: All › Work › Servers =====
     Row {
-      id: chips
-      visible: tab.protocolsInUse > 1
-      anchors.verticalCenter: parent.verticalCenter
-      spacing: Style.space(4)
-      Repeater {
-        model: ["ssh", "rdp", "vnc"]
-        delegate: Pill {
-          required property string modelData
-          readonly property bool on: tab.protoFilter === modelData
-          visible: (tab.counts[modelData] || 0) > 0
-          iconText: panel.protocolIcons[modelData]
-          tooltip: (on ? "Show everything" : "Only " + Model.protocolLabel(modelData)) + " · " + tab.counts[modelData]
-          tint: on ? panel.protocolColors[modelData] : panel.dim
-          filled: on
-          fontFamily: panel.fontFamily
-          onClicked: {
-            tab.closeMenus()
-            tab.protoFilter = on ? "" : modelData
+      visible: !tab.firstRun && !tab.atTop
+      width: parent.width
+      spacing: Style.space(8)
+
+      Pill {
+        id: upBtn
+        anchors.verticalCenter: parent.verticalCenter
+        text: "←"
+        tooltip: "Up one folder (← or Backspace)"
+        tint: panel.foreground
+        fontFamily: panel.fontFamily
+        onClicked: tab.goUp()
+      }
+
+      Flow {
+        width: parent.width - upBtn.width - Style.space(8)
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.space(4)
+
+        Repeater {
+          model: tab.crumbs
+          delegate: Row {
+            id: crumb
+            required property var modelData
+            required property int index
+            readonly property bool last: index === tab.crumbs.length - 1
+            spacing: Style.space(4)
+
+            Text {
+              visible: crumb.index > 0
+              anchors.verticalCenter: parent.verticalCenter
+              text: "›"
+              color: panel.dim
+              font.family: panel.fontFamily
+              font.pixelSize: Style.font.body
+            }
+            Text {
+              anchors.verticalCenter: parent.verticalCenter
+              text: crumb.index === 0 ? "󰋜" : crumb.modelData.name
+              textFormat: Text.PlainText
+              color: crumb.last ? panel.foreground : (crumbMouse.containsMouse ? panel.accent : panel.dim)
+              font.family: panel.fontFamily
+              font.pixelSize: crumb.last ? Style.font.title : Style.font.body
+              font.bold: crumb.last
+              font.underline: !crumb.last && crumbMouse.containsMouse
+              MouseArea {
+                id: crumbMouse
+                anchors.fill: parent
+                enabled: !crumb.last
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: tab.openFolder(crumb.modelData.path)
+              }
+            }
           }
         }
       }
@@ -655,67 +735,6 @@ Column {
     enabled: !store.installBusy
     fontFamily: panel.fontFamily
     onClicked: store.installPackages(store.missingPackages)
-  }
-
-  // ===== Where we are: All › Work › Servers =====
-  Row {
-    visible: !tab.firstRun && !tab.atTop
-    width: parent.width
-    spacing: Style.space(8)
-
-    Pill {
-      id: upBtn
-      anchors.verticalCenter: parent.verticalCenter
-      text: "←"
-      tooltip: "Up one folder (← or Backspace)"
-      tint: panel.foreground
-      fontFamily: panel.fontFamily
-      onClicked: tab.goUp()
-    }
-
-    Flow {
-      width: parent.width - upBtn.width - Style.space(8)
-      anchors.verticalCenter: parent.verticalCenter
-      spacing: Style.space(4)
-
-      Repeater {
-        model: tab.crumbs
-        delegate: Row {
-          id: crumb
-          required property var modelData
-          required property int index
-          readonly property bool last: index === tab.crumbs.length - 1
-          spacing: Style.space(4)
-
-          Text {
-            visible: crumb.index > 0
-            anchors.verticalCenter: parent.verticalCenter
-            text: "›"
-            color: panel.dim
-            font.family: panel.fontFamily
-            font.pixelSize: Style.font.body
-          }
-          Text {
-            anchors.verticalCenter: parent.verticalCenter
-            text: crumb.index === 0 ? "󰋜" : crumb.modelData.name
-            textFormat: Text.PlainText
-            color: crumb.last ? panel.foreground : (crumbMouse.containsMouse ? panel.accent : panel.dim)
-            font.family: panel.fontFamily
-            font.pixelSize: crumb.last ? Style.font.title : Style.font.body
-            font.bold: crumb.last
-            font.underline: !crumb.last && crumbMouse.containsMouse
-            MouseArea {
-              id: crumbMouse
-              anchors.fill: parent
-              enabled: !crumb.last
-              hoverEnabled: true
-              cursorShape: Qt.PointingHandCursor
-              onClicked: tab.openFolder(crumb.modelData.path)
-            }
-          }
-        }
-      }
-    }
   }
 
   // ===== Empty =====
@@ -770,9 +789,9 @@ Column {
       required property var modelData
       width: tab.width
       spacing: Style.space(2)
-      // Above the sections after it while one of its rows has the ⋯ menu
-      // open, so the menu floats over them.
-      z: tab.menuKey.indexOf(section.modelData.kind === "folder" ? "folder|" : section.modelData.id + "|") === 0 ? 10 : 0
+      // Above the sections after it while one of its rows has a popover
+      // open, so it floats over them.
+      z: tab.popoverKey.indexOf(section.modelData.kind === "folder" ? "folder|" : section.modelData.id + "|") === 0 ? 10 : 0
 
       PanelSectionHeader {
         visible: section.modelData.title !== ""
@@ -810,109 +829,117 @@ Column {
     }
   }
 
-  // ===== New folder (inline) =====
+  // ===== Pinned under the list (BarWidget's bottom strip) =====
   Column {
-    visible: tab.addingFolder
-    width: parent.width
-    spacing: Style.space(6)
+    parent: panel.bottomSlot
+    width: parent ? parent.width : 0
+    visible: tab.visible && !tab.firstRun
+    spacing: Style.space(8)
 
-    Row {
+    // ===== New folder (inline) =====
+    Column {
+      visible: tab.addingFolder
       width: parent.width
       spacing: Style.space(6)
-      Field {
-        id: newFolderField
-        width: parent.width - createFolderBtn.width - cancelFolderBtn.width - Style.space(12)
-        placeholderText: tab.here === "" || tab.here === Model.SSH_CONFIG_FOLDER
-          ? "New folder name"
-          : "New folder in " + Model.folderName(tab.here)
-        foreground: panel.foreground
-        accent: panel.accent
-        onTextChanged: tab.folderError = ""
-        onAccepted: tab.createFolder(text)
-        Keys.onEscapePressed: {
-          text = ""
-          tab.addingFolder = false
-          panel.focusKeys()
+
+      Row {
+        width: parent.width
+        spacing: Style.space(6)
+        Field {
+          id: newFolderField
+          width: parent.width - createFolderBtn.width - cancelFolderBtn.width - Style.space(12)
+          placeholderText: tab.here === "" || tab.here === Model.SSH_CONFIG_FOLDER
+            ? "New folder name"
+            : "New folder in " + Model.folderName(tab.here)
+          foreground: panel.foreground
+          accent: panel.accent
+          onTextChanged: tab.folderError = ""
+          onAccepted: tab.createFolder(text)
+          Keys.onEscapePressed: {
+            text = ""
+            tab.addingFolder = false
+            panel.focusKeys()
+          }
+        }
+        Pill {
+          id: cancelFolderBtn
+          anchors.verticalCenter: parent.verticalCenter
+          text: "Cancel"
+          tint: panel.foreground
+          fontFamily: panel.fontFamily
+          onClicked: {
+            newFolderField.text = ""
+            tab.addingFolder = false
+            panel.focusKeys()
+          }
+        }
+        Pill {
+          id: createFolderBtn
+          anchors.verticalCenter: parent.verticalCenter
+          text: "Create"
+          filled: true
+          tint: panel.accent
+          enabled: newFolderField.text.trim() !== ""
+          fontFamily: panel.fontFamily
+          onClicked: tab.createFolder(newFolderField.text)
         }
       }
-      Pill {
-        id: cancelFolderBtn
-        anchors.verticalCenter: parent.verticalCenter
-        text: "Cancel"
-        tint: panel.foreground
-        fontFamily: panel.fontFamily
-        onClicked: {
-          newFolderField.text = ""
-          tab.addingFolder = false
-          panel.focusKeys()
-        }
-      }
-      Pill {
-        id: createFolderBtn
-        anchors.verticalCenter: parent.verticalCenter
-        text: "Create"
-        filled: true
-        tint: panel.accent
-        enabled: newFolderField.text.trim() !== ""
-        fontFamily: panel.fontFamily
-        onClicked: tab.createFolder(newFolderField.text)
+      Text {
+        visible: tab.folderError !== "" && tab.renameKey === ""
+        width: parent.width
+        text: tab.folderError
+        textFormat: Text.PlainText
+        wrapMode: Text.Wrap
+        color: panel.urgent
+        font.family: panel.fontFamily
+        font.pixelSize: Style.font.caption
       }
     }
-    Text {
-      visible: tab.folderError !== "" && tab.renameKey === ""
+
+    // ===== Footer =====
+    Rectangle {
+      visible: !tab.firstRun
       width: parent.width
-      text: tab.folderError
-      textFormat: Text.PlainText
+      height: Style.normalBorderWidth
+      color: Util.alpha(panel.foreground, 0.08)
+    }
+
+    Row {
+      visible: !tab.firstRun
+      width: parent.width
+      spacing: Style.space(6)
+
+      Pill {
+        width: (parent.width - Style.space(6)) * 0.6
+        iconText: "󰐕"
+        text: "New connection"
+        tooltip: tab.here !== "" && tab.here !== Model.SSH_CONFIG_FOLDER ? "In " + Model.folderLabel(tab.here) + " (n)" : "n"
+        tint: panel.accent
+        enabled: store.writable
+        fontFamily: panel.fontFamily
+        onClicked: tab.newConnection()
+      }
+      Pill {
+        width: (parent.width - Style.space(6)) * 0.4
+        iconText: "󰉗"
+        text: "New folder"
+        tooltip: (tab.here !== "" && tab.here !== Model.SSH_CONFIG_FOLDER ? "Inside " + Model.folderLabel(tab.here) : "At the top level") + " (Shift+N)"
+        tint: panel.foreground
+        enabled: store.writable && tab.here !== Model.SSH_CONFIG_FOLDER
+        fontFamily: panel.fontFamily
+        onClicked: tab.startNewFolder()
+      }
+    }
+
+    Text {
+      visible: !tab.firstRun && !panel.compact
+      width: parent.width
+      horizontalAlignment: Text.AlignHCenter
+      text: "↑↓ move · ↵ open · ← back · / search · m move · n new"
       wrapMode: Text.Wrap
-      color: panel.urgent
+      color: panel.dim
       font.family: panel.fontFamily
       font.pixelSize: Style.font.caption
     }
-  }
-
-  // ===== Footer =====
-  Rectangle {
-    visible: !tab.firstRun
-    width: parent.width
-    height: Style.normalBorderWidth
-    color: Util.alpha(panel.foreground, 0.08)
-  }
-
-  Row {
-    visible: !tab.firstRun
-    width: parent.width
-    spacing: Style.space(6)
-
-    Pill {
-      width: (parent.width - Style.space(6)) * 0.6
-      iconText: "󰐕"
-      text: "New connection"
-      tooltip: tab.here !== "" && tab.here !== Model.SSH_CONFIG_FOLDER ? "In " + Model.folderLabel(tab.here) + " (n)" : "n"
-      tint: panel.accent
-      enabled: store.writable
-      fontFamily: panel.fontFamily
-      onClicked: tab.newConnection()
-    }
-    Pill {
-      width: (parent.width - Style.space(6)) * 0.4
-      iconText: "󰉗"
-      text: "New folder"
-      tooltip: (tab.here !== "" && tab.here !== Model.SSH_CONFIG_FOLDER ? "Inside " + Model.folderLabel(tab.here) : "At the top level") + " (Shift+N)"
-      tint: panel.foreground
-      enabled: store.writable && tab.here !== Model.SSH_CONFIG_FOLDER
-      fontFamily: panel.fontFamily
-      onClicked: tab.startNewFolder()
-    }
-  }
-
-  Text {
-    visible: !tab.firstRun
-    width: parent.width
-    horizontalAlignment: Text.AlignHCenter
-    text: "↑↓ move · ↵ open · ← back · / search · m move · n new"
-    wrapMode: Text.Wrap
-    color: panel.dim
-    font.family: panel.fontFamily
-    font.pixelSize: Style.font.caption
   }
 }

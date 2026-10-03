@@ -5,8 +5,8 @@ import "Model.js" as Model
 
 // One connection in the Connect tab: protocol tile with a reachability dot,
 // name and address, and — while it has the mouse or the keyboard cursor —
-// its actions. Below it, when asked for: the ⋯ actions, the folder picker
-// (Move to), the RDP password prompt and the delete confirmation. All the
+// its actions. Floating under it, when asked for: the ⋯ actions, the folder
+// picker (Move to), the RDP password prompt and the delete confirmation. All the
 // state lives in the tab (keyed by `rowKey`, since one connection can show
 // up twice: in Favorites and in its folder).
 Column {
@@ -29,12 +29,17 @@ Column {
   readonly property bool confirmingDelete: view.pendingDeleteKey === rowKey
   // The actions stay on screen while this row's menu is open, so its ✕ can
   // always close it.
-  readonly property bool showActions: isSelected || menuOpen || moving || askingPassword
+  readonly property bool showActions: isSelected || menuOpen || moving || askingPassword || confirmingDelete
   readonly property bool missing: view.clientMissing(conn)
   readonly property var reach: store.reachOf(conn.id)
 
   spacing: Style.space(4)
-  z: menuOpen ? 10 : 0
+
+  // ↑/↓ landed here: keep it on screen when the list scrolls.
+  readonly property bool hasKeyboardCursor: view.selectedKey === rowKey
+  onHasKeyboardCursorChanged: if (hasKeyboardCursor) Qt.callLater(function() { view.reveal(row) })
+
+  z: menuOpen || moving || askingPassword || confirmingDelete ? 10 : 0
 
   Rectangle {
     width: parent.width
@@ -77,6 +82,192 @@ Column {
             view.closeMenus()
             view.pendingDeleteKey = row.rowKey
             view.selectedKey = row.rowKey
+          }
+        }
+      }
+
+      // Move to: the folder tree, the current one ticked, and a field for a
+      // new folder.
+      ActionMenu {
+        id: movePicker
+        visible: row.moving
+        y: parent.height
+        width: parent.width
+        cardWidth: Style.space(270)
+        panel: row.panel
+        bounds: view
+        onOverflowChanged: if (visible) view.menuOverflow = overflow
+        onVisibleChanged: if (!visible) moveNewField.text = ""
+        title: "Move “" + row.conn.name + "” to"
+        actions: {
+          var list = [{ id: "", icon: "󰋜", text: "Top level", checked: row.conn.group === "" }]
+          var folders = store.allFolders
+          for (var i = 0; i < folders.length; i++)
+            list.push({
+              id: folders[i],
+              icon: row.conn.group === folders[i] ? "󰝰" : "󰉋",
+              iconColor: panel.folderColor,
+              text: Model.folderName(folders[i]),
+              indent: folders[i].split("/").length,
+              checked: row.conn.group === folders[i]
+            })
+          return list
+        }
+        onTriggered: function(id) { view.moveTo(row.conn, id) }
+
+        Rectangle {
+          width: parent.width
+          height: Style.normalBorderWidth
+          color: Util.alpha(panel.foreground, 0.1)
+        }
+        Item {
+          width: parent.width
+          height: moveNewField.height + Style.space(8)
+          Field {
+            id: moveNewField
+            x: Style.space(4)
+            anchors.verticalCenter: parent.verticalCenter
+            width: parent.width - Style.space(8)
+            placeholderText: "󰉗  New folder" + (view.here === "" || view.here === Model.SSH_CONFIG_FOLDER ? "" : " in " + Model.folderName(view.here)) + " · ↵"
+            foreground: panel.foreground
+            accent: panel.accent
+            onAccepted: if (text.trim() !== "") view.moveToNewFolder(row.conn, text)
+            Keys.onEscapePressed: { view.closeMenus(); panel.focusKeys() }
+          }
+        }
+      }
+
+      // Password prompt (RDP with no saved password)
+      Popover {
+        visible: row.askingPassword
+        y: parent.height
+        width: parent.width
+        cardWidth: Style.space(290)
+        padding: Style.space(12)
+        panel: row.panel
+        bounds: view
+        onOverflowChanged: if (visible) view.menuOverflow = overflow
+        onVisibleChanged: {
+          if (!visible) { pwField.text = ""; return }
+          pwUser.text = row.conn.user
+          Qt.callLater(function() { (row.conn.user === "" ? pwUser : pwField).forceActiveFocus() })
+        }
+
+        Column {
+          width: parent.width
+          spacing: Style.space(8)
+
+          Text {
+            width: parent.width
+            text: "󰌾  Sign in to " + row.conn.host + (row.conn.rdp && row.conn.rdp.domain ? " (domain " + row.conn.rdp.domain + ")" : "")
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            color: panel.foreground
+            font.family: panel.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+          Field {
+            id: pwUser
+            width: parent.width
+            placeholderText: "User"
+            foreground: panel.foreground
+            accent: panel.accent
+            onAccepted: pwField.forceActiveFocus()
+            Keys.onEscapePressed: { view.passwordKey = ""; panel.focusKeys() }
+          }
+          Field {
+            id: pwField
+            width: parent.width
+            placeholderText: "Password"
+            password: true
+            foreground: panel.foreground
+            accent: panel.accent
+            onAccepted: view.connectWithPassword(row.conn, pwUser.text, text)
+            Keys.onEscapePressed: { view.passwordKey = ""; panel.focusKeys() }
+          }
+          Toggle {
+            width: parent.width
+            label: "Remember in keyring"
+            description: view.rememberPassword ? "Next time it connects without asking." : "Used once, then deleted."
+            checked: view.rememberPassword
+            foreground: panel.foreground
+            accent: panel.accent
+            fontFamily: panel.fontFamily
+            onClicked: view.rememberPassword = !view.rememberPassword
+          }
+          Row {
+            anchors.right: parent.right
+            spacing: Style.space(6)
+            Pill {
+              text: "Cancel"
+              tint: panel.foreground
+              fontFamily: panel.fontFamily
+              onClicked: { view.passwordKey = ""; panel.focusKeys() }
+            }
+            Pill {
+              text: "Connect ↵"
+              filled: true
+              tint: panel.accent
+              enabled: pwField.text !== ""
+              fontFamily: panel.fontFamily
+              onClicked: view.connectWithPassword(row.conn, pwUser.text, pwField.text)
+            }
+          }
+        }
+      }
+
+      // Delete confirmation
+      Popover {
+        visible: row.confirmingDelete
+        y: parent.height
+        width: parent.width
+        cardWidth: Style.space(270)
+        padding: Style.space(12)
+        panel: row.panel
+        bounds: view
+        onOverflowChanged: if (visible) view.menuOverflow = overflow
+
+        Column {
+          width: parent.width
+          spacing: Style.space(10)
+          Text {
+            width: parent.width
+            text: "Delete “" + row.conn.name + "”?"
+            textFormat: Text.PlainText
+            wrapMode: Text.Wrap
+            color: panel.foreground
+            font.family: panel.fontFamily
+            font.pixelSize: Style.font.caption
+            font.bold: true
+          }
+          Text {
+            width: parent.width
+            text: row.conn.hasSecret ? "Its saved password leaves the keyring too. This can't be undone." : "This can't be undone."
+            wrapMode: Text.Wrap
+            color: panel.dim
+            font.family: panel.fontFamily
+            font.pixelSize: Style.font.caption
+          }
+          Row {
+            anchors.right: parent.right
+            spacing: Style.space(6)
+            Pill {
+              text: "Keep"
+              tint: panel.foreground
+              fontFamily: panel.fontFamily
+              onClicked: view.pendingDeleteKey = ""
+            }
+            Pill {
+              text: "Delete"
+              filled: true
+              tint: panel.urgent
+              fontFamily: panel.fontFamily
+              onClicked: {
+                store.remove(row.conn.id)
+                view.pendingDeleteKey = ""
+              }
+            }
           }
         }
       }
@@ -241,182 +432,6 @@ Column {
             onClicked: view.primaryAction(row.conn, row.rowKey)
           }
         }
-      }
-    }
-  }
-
-  // Move to: every folder as a chip, the current one marked.
-  Column {
-    visible: row.moving
-    width: parent.width
-    leftPadding: Style.space(48)
-    spacing: Style.space(6)
-    onVisibleChanged: if (!visible) moveNewField.text = ""
-
-    Text {
-      width: parent.width - Style.space(48)
-      text: "Move “" + row.conn.name + "” to"
-      textFormat: Text.PlainText
-      elide: Text.ElideRight
-      color: panel.foreground
-      font.family: panel.fontFamily
-      font.pixelSize: Style.font.caption
-    }
-
-    Flow {
-      width: parent.width - Style.space(48)
-      spacing: Style.space(6)
-
-      Pill {
-        text: "Top level"
-        iconText: "󰋜"
-        tint: row.conn.group === "" ? panel.accent : panel.foreground
-        bold: row.conn.group === ""
-        fontFamily: panel.fontFamily
-        onClicked: view.moveTo(row.conn, "")
-      }
-      Repeater {
-        model: store.allFolders
-        delegate: Pill {
-          required property string modelData
-          readonly property bool here: row.conn.group === modelData
-          text: Model.folderLabel(modelData)
-          iconText: here ? "󰝰" : "󰉋"
-          tint: here ? panel.accent : panel.foreground
-          bold: here
-          fontFamily: panel.fontFamily
-          onClicked: view.moveTo(row.conn, modelData)
-        }
-      }
-    }
-
-    Row {
-      spacing: Style.space(6)
-      Field {
-        id: moveNewField
-        width: row.width - Style.space(48) - moveNewBtn.width - Style.space(6)
-        placeholderText: view.here === "" || view.here === Model.SSH_CONFIG_FOLDER
-          ? "Or a new folder…"
-          : "Or a new folder in " + Model.folderName(view.here) + "…"
-        foreground: panel.foreground
-        accent: panel.accent
-        onAccepted: view.moveToNewFolder(row.conn, text)
-        Keys.onEscapePressed: { view.closeMenus(); panel.focusKeys() }
-      }
-      Pill {
-        id: moveNewBtn
-        anchors.verticalCenter: parent.verticalCenter
-        text: "Create & move"
-        tint: panel.accent
-        enabled: moveNewField.text.trim() !== ""
-        fontFamily: panel.fontFamily
-        onClicked: view.moveToNewFolder(row.conn, moveNewField.text)
-      }
-    }
-  }
-
-  // Password prompt (RDP with no saved password)
-  Column {
-    visible: row.askingPassword
-    width: parent.width
-    leftPadding: Style.space(48)
-    spacing: Style.space(6)
-    onVisibleChanged: {
-      if (!visible) { pwField.text = ""; return }
-      pwUser.text = row.conn.user
-      Qt.callLater(function() { (row.conn.user === "" ? pwUser : pwField).forceActiveFocus() })
-    }
-
-    Text {
-      width: parent.width - Style.space(48)
-      text: "Sign in to " + row.conn.host + (row.conn.rdp && row.conn.rdp.domain ? " (domain " + row.conn.rdp.domain + ")" : "")
-      textFormat: Text.PlainText
-      wrapMode: Text.Wrap
-      color: panel.foreground
-      font.family: panel.fontFamily
-      font.pixelSize: Style.font.caption
-    }
-    Field {
-      id: pwUser
-      width: parent.width - Style.space(48)
-      placeholderText: "User"
-      foreground: panel.foreground
-      accent: panel.accent
-      onAccepted: pwField.forceActiveFocus()
-      Keys.onEscapePressed: { view.passwordKey = ""; panel.focusKeys() }
-    }
-    Field {
-      id: pwField
-      width: parent.width - Style.space(48)
-      placeholderText: "Password"
-      password: true
-      foreground: panel.foreground
-      accent: panel.accent
-      onAccepted: view.connectWithPassword(row.conn, pwUser.text, text)
-      Keys.onEscapePressed: { view.passwordKey = ""; panel.focusKeys() }
-    }
-    Toggle {
-      width: parent.width - Style.space(48)
-      label: "Remember in keyring"
-      description: view.rememberPassword ? "Next time it connects without asking." : "Used once, then deleted."
-      checked: view.rememberPassword
-      foreground: panel.foreground
-      accent: panel.accent
-      fontFamily: panel.fontFamily
-      onClicked: view.rememberPassword = !view.rememberPassword
-    }
-    Row {
-      spacing: Style.space(6)
-      Pill {
-        text: "Cancel"
-        tint: panel.foreground
-        fontFamily: panel.fontFamily
-        onClicked: { view.passwordKey = ""; panel.focusKeys() }
-      }
-      Pill {
-        text: "Connect ↵"
-        filled: true
-        tint: panel.accent
-        enabled: pwField.text !== ""
-        fontFamily: panel.fontFamily
-        onClicked: view.connectWithPassword(row.conn, pwUser.text, pwField.text)
-      }
-    }
-  }
-
-  // Delete confirmation
-  Row {
-    visible: row.confirmingDelete
-    width: parent.width
-    leftPadding: Style.space(48)
-    spacing: Style.space(6)
-
-    Text {
-      width: parent.width - Style.space(48) - keepBtn.width - deleteBtn.width - Style.space(12)
-      anchors.verticalCenter: parent.verticalCenter
-      text: "Delete “" + row.conn.name + "”?" + (row.conn.hasSecret ? " Its password leaves the keyring too." : "")
-      textFormat: Text.PlainText
-      wrapMode: Text.Wrap
-      color: panel.foreground
-      font.family: panel.fontFamily
-      font.pixelSize: Style.font.caption
-    }
-    Pill {
-      id: keepBtn
-      text: "Keep"
-      tint: panel.foreground
-      fontFamily: panel.fontFamily
-      onClicked: view.pendingDeleteKey = ""
-    }
-    Pill {
-      id: deleteBtn
-      text: "Delete"
-      filled: true
-      tint: panel.urgent
-      fontFamily: panel.fontFamily
-      onClicked: {
-        store.remove(row.conn.id)
-        view.pendingDeleteKey = ""
       }
     }
   }

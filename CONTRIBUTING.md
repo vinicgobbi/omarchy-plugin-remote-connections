@@ -43,12 +43,17 @@ omarchy plugin validate .
 - `manifest.json` — plugin metadata: kinds `bar-widget` + `overlay`,
   `keepLoaded` so the launcher opens with the list already loaded
 - `BarWidget.qml` is only the frame: bar icon, header with the Setup gear,
-  and keyboard routing; the content lives in `ConnectTab.qml` (folder
+  keyboard routing, and the layout — a top and a bottom strip that stay put
+  (ConnectTab and ConnectionForm put their search/breadcrumb/title and
+  buttons there with `parent: panel.topSlot`/`bottomSlot`) around the list,
+  which is the only part that scrolls on a short screen; the content lives in `ConnectTab.qml` (folder
   navigation and breadcrumb, search, open sessions, new folder, first-run
   cards), its rows `FolderRow.qml` (open, rename, delete) and
-  `ConnectionRow.qml` (actions, Move to, inline password prompt, delete),
+  `ConnectionRow.qml` (actions, Move to, password prompt, delete),
   and `ConnectionForm.qml` (add/edit). `Pill.qml` is the small button they
-  share, `ActionMenu.qml` the ⋯ menu of both rows; `Field.qml` is the shell's TextField keeping Return to itself (so
+  share; `Popover.qml` the card that floats under a row (over the list,
+  without pushing it) for the ⋯ menu, Move to, the password prompt and the
+  delete confirmations, and `ActionMenu.qml` the menu built on it; `Field.qml` is the shell's TextField keeping Return to itself (so
   it doesn't also reach the popup's key handler and connect a row). Status colors (green/yellow/blue/magenta) come
   from the current theme's `colors.toml`, since the shell palette has none
 - `ChangeSheet.qml` — the review sheet (its own overlay window): loads a plan

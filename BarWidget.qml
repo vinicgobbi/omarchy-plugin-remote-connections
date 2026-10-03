@@ -45,6 +45,7 @@ Panel {
 
   function openSetup() {
     closeForm()
+    flick.contentY = 0
     connectTab.closeMenus()
     setupView.reset()
     setupOpen = true
@@ -55,11 +56,31 @@ Panel {
     connectTab.closeMenus()
     formSeed = seed || null
     formId = id || "new"
+    flick.contentY = 0
   }
 
   function closeForm() {
     formId = ""
     formSeed = null
+  }
+
+  // Where ConnectTab and ConnectionForm put what stays on screen while the
+  // list scrolls (see `frame` below).
+  readonly property Item topSlot: topStrip
+  readonly property Item bottomSlot: bottomStrip
+  // Short screen: drop the extras (the keyboard hint line).
+  readonly property bool compact: panel.availableCardHeight > 0 && panel.availableCardHeight < Style.space(760)
+
+  // Scrolls the list just enough to show `item` (a row, a popover's card,
+  // a focused field), with a little room around it.
+  function reveal(item) {
+    if (!item || !flick.contentItem) return
+    var top = item.mapToItem(flick.contentItem, 0, 0).y - Style.space(8)
+    var bottom = top + item.height + Style.space(16)
+    var y = flick.contentY
+    if (bottom > y + flick.height) y = bottom - flick.height
+    if (top < y) y = top
+    flick.contentY = Math.max(0, Math.min(y, flick.contentHeight - flick.height))
   }
 
   // Give the keyboard back to the popup's key handler (after a text field).
@@ -155,7 +176,7 @@ Panel {
     open: root.opened
     focusTarget: keys
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(content.implicitHeight + connectTab.menuOverflow)
+    contentHeight: panel.fittedContentHeight(frame.chrome + content.implicitHeight + connectTab.menuOverflow)
 
     PanelKeyCatcher {
       id: keys
@@ -185,111 +206,141 @@ Panel {
         if (!root.takeover) connectTab.textKey(t)
       }
 
-      Flickable {
-        id: flick
+      // Fixed header, a pinned strip on top (search and breadcrumb, or the
+      // form's title), the list scrolling in between, and a pinned strip at
+      // the bottom (New connection/folder, or Save): on a short screen the
+      // list scrolls but what you act with stays on screen.
+      Column {
+        id: frame
         anchors.fill: parent
-        contentWidth: width
-        contentHeight: content.implicitHeight + connectTab.menuOverflow
-        clip: true
-        boundsBehavior: Flickable.StopAtBounds
-        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+        spacing: Style.space(12)
 
-        Column {
-          id: content
+        readonly property real chrome: (headerRow.visible ? headerRow.height + spacing : 0)
+          + (topStrip.visible ? topStrip.height + spacing : 0)
+          + (bottomStrip.visible ? bottomStrip.height + spacing : 0)
+
+        // --- Header: title and the Setup gear ---
+        Row {
+          id: headerRow
           width: parent.width
-          spacing: Style.space(12)
+          spacing: Style.space(8)
+          visible: !root.formOpen
 
-          // --- Header: title and the Setup gear ---
-          Row {
-            width: parent.width
-            spacing: Style.space(8)
-            visible: !root.formOpen
+          Pill {
+            visible: root.setupOpen
+            anchors.verticalCenter: parent.verticalCenter
+            text: "←"
+            tooltip: "Back (Esc)"
+            tint: root.foreground
+            fontFamily: root.fontFamily
+            onClicked: root.setupOpen = false
+          }
 
+          Text {
+            width: parent.width - gear.width - (root.setupOpen ? Style.space(52) : Style.space(8))
+            anchors.verticalCenter: parent.verticalCenter
+            text: root.setupOpen ? "Setup" : "Remote Connections"
+            color: root.foreground
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.title
+            font.bold: true
+            elide: Text.ElideRight
+          }
+
+          // Setup, with how many needed things are missing.
+          Item {
+            id: gear
+            visible: !root.setupOpen
+            anchors.verticalCenter: parent.verticalCenter
+            width: visible ? gearPill.width : 0
+            height: gearPill.height
             Pill {
-              visible: root.setupOpen
-              anchors.verticalCenter: parent.verticalCenter
-              text: "←"
-              tooltip: "Back (Esc)"
+              id: gearPill
+              iconText: "󰒓"
+              tooltip: store.neededMissing.length > 0
+                ? "Setup · " + store.neededMissing.length + " needed client(s) not installed"
+                : "Setup · install the SSH, RDP and VNC clients"
               tint: root.foreground
               fontFamily: root.fontFamily
-              onClicked: root.setupOpen = false
+              onClicked: root.openSetup()
             }
-
-            Text {
-              width: parent.width - gear.width - (root.setupOpen ? Style.space(52) : Style.space(8))
-              anchors.verticalCenter: parent.verticalCenter
-              text: root.setupOpen ? "Setup" : "Remote Connections"
-              color: root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.title
-              font.bold: true
-              elide: Text.ElideRight
-            }
-
-            // Setup, with how many needed things are missing.
-            Item {
-              id: gear
-              visible: !root.setupOpen
-              anchors.verticalCenter: parent.verticalCenter
-              width: visible ? gearPill.width : 0
-              height: gearPill.height
-              Pill {
-                id: gearPill
-                iconText: "󰒓"
-                tooltip: store.neededMissing.length > 0
-                  ? "Setup · " + store.neededMissing.length + " needed client(s) not installed"
-                  : "Setup · install the SSH, RDP and VNC clients"
-                tint: root.foreground
-                fontFamily: root.fontFamily
-                onClicked: root.openSetup()
-              }
-              Rectangle {
-                visible: store.neededMissing.length > 0
-                anchors.right: parent.right
-                anchors.top: parent.top
-                anchors.rightMargin: -Style.space(4)
-                anchors.topMargin: -Style.space(4)
-                width: Math.max(height, badgeText.implicitWidth + Style.space(8))
-                height: badgeText.implicitHeight + Style.space(2)
-                radius: height / 2
-                color: root.warnColor
-                Text {
-                  id: badgeText
-                  anchors.centerIn: parent
-                  text: store.neededMissing.length
-                  color: Color.background
-                  font.family: root.fontFamily
-                  font.pixelSize: Style.font.caption
-                  font.bold: true
-                }
+            Rectangle {
+              visible: store.neededMissing.length > 0
+              anchors.right: parent.right
+              anchors.top: parent.top
+              anchors.rightMargin: -Style.space(4)
+              anchors.topMargin: -Style.space(4)
+              width: Math.max(height, badgeText.implicitWidth + Style.space(8))
+              height: badgeText.implicitHeight + Style.space(2)
+              radius: height / 2
+              color: root.warnColor
+              Text {
+                id: badgeText
+                anchors.centerIn: parent
+                text: store.neededMissing.length
+                color: Color.background
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+                font.bold: true
               }
             }
           }
+        }
 
-          ConnectTab {
-            id: connectTab
-            width: parent.width
-            visible: !root.takeover
-            panel: root
-            store: store
-            flickable: flick
-          }
+        Column {
+          id: topStrip
+          width: parent.width
+          spacing: Style.space(10)
+          visible: root.formOpen || (!root.setupOpen && !connectTab.firstRun)
+        }
 
-          SetupView {
-            id: setupView
-            width: parent.width
-            visible: root.setupOpen
-            panel: root
-            store: store
-          }
+        Flickable {
+          id: flick
+          width: parent.width
+          height: Math.max(0, frame.height - frame.chrome)
+          contentWidth: width
+          contentHeight: content.implicitHeight + connectTab.menuOverflow
+          clip: true
+          boundsBehavior: Flickable.StopAtBounds
+          ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-          ConnectionForm {
-            id: form
+          Column {
+            id: content
             width: parent.width
-            visible: root.formOpen
-            panel: root
-            store: store
+            spacing: Style.space(12)
+
+            ConnectTab {
+              id: connectTab
+              width: parent.width
+              visible: !root.takeover
+              panel: root
+              store: store
+              flickable: flick
+            }
+
+            SetupView {
+              id: setupView
+              width: parent.width
+              visible: root.setupOpen
+              panel: root
+              store: store
+            }
+
+            ConnectionForm {
+              id: form
+              width: parent.width
+              visible: root.formOpen
+              panel: root
+              store: store
+            }
           }
+        }
+
+        Column {
+          id: bottomStrip
+          width: parent.width
+          spacing: Style.space(8)
+          visible: root.formOpen || (!root.setupOpen && !connectTab.firstRun)
         }
       }
     }

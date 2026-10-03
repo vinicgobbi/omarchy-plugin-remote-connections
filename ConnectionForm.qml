@@ -182,25 +182,32 @@ Column {
     }
   }
 
-  // ===== Header =====
-  Row {
-    width: parent.width
-    spacing: Style.space(8)
-    Pill {
-      anchors.verticalCenter: parent.verticalCenter
-      text: "←"
-      tooltip: "Back (Esc)"
-      tint: panel.foreground
-      fontFamily: panel.fontFamily
-      onClicked: panel.closeForm()
-    }
-    Text {
-      anchors.verticalCenter: parent.verticalCenter
-      text: form.isNew ? "New connection" : "Edit connection"
-      color: panel.foreground
-      font.family: panel.fontFamily
-      font.pixelSize: Style.font.title
-      font.bold: true
+  // ===== Header, pinned on top (BarWidget's top strip) =====
+  Column {
+    parent: panel.topSlot
+    width: parent ? parent.width : 0
+    visible: form.visible
+
+    // ===== Header =====
+    Row {
+      width: parent.width
+      spacing: Style.space(8)
+      Pill {
+        anchors.verticalCenter: parent.verticalCenter
+        text: "←"
+        tooltip: "Back (Esc)"
+        tint: panel.foreground
+        fontFamily: panel.fontFamily
+        onClicked: panel.closeForm()
+      }
+      Text {
+        anchors.verticalCenter: parent.verticalCenter
+        text: form.isNew ? "New connection" : "Edit connection"
+        color: panel.foreground
+        font.family: panel.fontFamily
+        font.pixelSize: Style.font.title
+        font.bold: true
+      }
     }
   }
 
@@ -670,42 +677,50 @@ Column {
     }
   }
 
-  Text {
-    visible: form.error !== ""
-    width: parent.width
-    text: form.error
-    textFormat: Text.PlainText
-    wrapMode: Text.Wrap
-    color: panel.urgent
-    font.family: panel.fontFamily
-    font.pixelSize: Style.font.caption
-  }
+  // ===== Error and buttons, pinned under the form (BarWidget's bottom strip) =====
+  Column {
+    parent: panel.bottomSlot
+    width: parent ? parent.width : 0
+    visible: form.visible
+    spacing: Style.space(8)
 
-  // ===== Footer =====
-  Row {
-    width: parent.width
-    spacing: Style.space(6)
-    layoutDirection: Qt.RightToLeft
-    Pill {
-      text: "Save & connect"
-      filled: true
-      tint: panel.accent
-      enabled: form.dHost.trim() !== ""
-      fontFamily: panel.fontFamily
-      onClicked: form.save(true)
+    Text {
+      visible: form.error !== ""
+      width: parent.width
+      text: form.error
+      textFormat: Text.PlainText
+      wrapMode: Text.Wrap
+      color: panel.urgent
+      font.family: panel.fontFamily
+      font.pixelSize: Style.font.caption
     }
-    Pill {
-      text: "Save"
-      tint: panel.accent
-      enabled: form.dHost.trim() !== ""
-      fontFamily: panel.fontFamily
-      onClicked: form.save(false)
-    }
-    Pill {
-      text: "Cancel"
-      tint: panel.foreground
-      fontFamily: panel.fontFamily
-      onClicked: panel.closeForm()
+
+    // ===== Footer =====
+    Row {
+      width: parent.width
+      spacing: Style.space(6)
+      layoutDirection: Qt.RightToLeft
+      Pill {
+        text: "Save & connect"
+        filled: true
+        tint: panel.accent
+        enabled: form.dHost.trim() !== ""
+        fontFamily: panel.fontFamily
+        onClicked: form.save(true)
+      }
+      Pill {
+        text: "Save"
+        tint: panel.accent
+        enabled: form.dHost.trim() !== ""
+        fontFamily: panel.fontFamily
+        onClicked: form.save(false)
+      }
+      Pill {
+        text: "Cancel"
+        tint: panel.foreground
+        fontFamily: panel.fontFamily
+        onClicked: panel.closeForm()
+      }
     }
   }
 }
