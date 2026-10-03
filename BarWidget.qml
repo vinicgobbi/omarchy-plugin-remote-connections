@@ -155,7 +155,7 @@ Panel {
     open: root.opened
     focusTarget: keys
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(content.implicitHeight)
+    contentHeight: panel.fittedContentHeight(content.implicitHeight + connectTab.menuOverflow)
 
     PanelKeyCatcher {
       id: keys
@@ -189,7 +189,7 @@ Panel {
         id: flick
         anchors.fill: parent
         contentWidth: width
-        contentHeight: content.implicitHeight
+        contentHeight: content.implicitHeight + connectTab.menuOverflow
         clip: true
         boundsBehavior: Flickable.StopAtBounds
         ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }

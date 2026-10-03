@@ -32,6 +32,7 @@ Column {
   }
 
   spacing: Style.space(4)
+  z: menuOpen ? 10 : 0
 
   Rectangle {
     width: parent.width
@@ -40,6 +41,32 @@ Column {
     color: row.lit ? Util.alpha(panel.accent, 0.12) : "transparent"
     border.width: row.lit ? Style.normalBorderWidth : 0
     border.color: Util.alpha(panel.accent, 0.35)
+
+      // ⋯ actions
+      ActionMenu {
+        visible: row.menuOpen
+        y: parent.height
+        width: parent.width
+        panel: row.panel
+        bounds: view
+        onOverflowChanged: if (visible) view.menuOverflow = overflow
+        actions: [
+          { id: "open", icon: "󰝰", text: "Open", hint: "↵" },
+          { id: "rename", icon: "󰏫", text: "Rename", hint: "e" },
+          { id: "new", icon: "󰐕", text: "New connection here", enabled: store.writable },
+          { id: "delete", icon: "󰆴", text: "Delete folder…", detail: row.folder.count + row.folder.folders > 0 ? "Keeps what's inside" : "", hint: "x", danger: true }
+        ]
+        onTriggered: function(id) {
+          if (id === "open") view.openFolder(row.folder.path)
+          else if (id === "rename") view.startRename(row.rowKey)
+          else if (id === "new") panel.openForm("new", { group: row.folder.path })
+          else if (id === "delete") {
+            view.closeMenus()
+            view.pendingDeleteKey = row.rowKey
+            view.selectedKey = row.rowKey
+          }
+        }
+      }
 
     HoverHandler {
       onHoveredChanged: {
@@ -206,40 +233,6 @@ Column {
             font.pixelSize: Style.font.title
           }
         }
-      }
-    }
-  }
-
-  // ⋯ actions
-  Flow {
-    visible: row.menuOpen
-    width: parent.width
-    leftPadding: Style.space(48)
-    spacing: Style.space(6)
-
-    Pill {
-      text: "Rename"
-      iconText: "󰏫"
-      tint: panel.foreground
-      fontFamily: panel.fontFamily
-      onClicked: view.startRename(row.rowKey)
-    }
-    Pill {
-      text: "New connection here"
-      iconText: "󰐕"
-      tint: panel.foreground
-      enabled: store.writable
-      fontFamily: panel.fontFamily
-      onClicked: panel.openForm("new", { group: row.folder.path })
-    }
-    Pill {
-      text: "Delete folder"
-      iconText: "󰆴"
-      tint: panel.urgent
-      fontFamily: panel.fontFamily
-      onClicked: {
-        view.closeMenus()
-        view.pendingDeleteKey = row.rowKey
       }
     }
   }

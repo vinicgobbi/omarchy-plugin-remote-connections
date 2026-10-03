@@ -48,7 +48,7 @@ omarchy plugin validate .
   cards), its rows `FolderRow.qml` (open, rename, delete) and
   `ConnectionRow.qml` (actions, Move to, inline password prompt, delete),
   and `ConnectionForm.qml` (add/edit). `Pill.qml` is the small button they
-  share; `Field.qml` is the shell's TextField keeping Return to itself (so
+  share, `ActionMenu.qml` the ⋯ menu of both rows; `Field.qml` is the shell's TextField keeping Return to itself (so
   it doesn't also reach the popup's key handler and connect a row). Status colors (green/yellow/blue/magenta) come
   from the current theme's `colors.toml`, since the shell palette has none
 - `ChangeSheet.qml` — the review sheet (its own overlay window): loads a plan

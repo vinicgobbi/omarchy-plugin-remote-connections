@@ -34,6 +34,7 @@ Column {
   readonly property var reach: store.reachOf(conn.id)
 
   spacing: Style.space(4)
+  z: menuOpen ? 10 : 0
 
   Rectangle {
     width: parent.width
@@ -42,6 +43,43 @@ Column {
     color: row.showActions ? Util.alpha(panel.accent, 0.12) : "transparent"
     border.width: row.showActions ? Style.normalBorderWidth : 0
     border.color: Util.alpha(panel.accent, 0.35)
+
+      // ⋯ actions
+      ActionMenu {
+        visible: row.menuOpen
+        y: parent.height
+        width: parent.width
+        panel: row.panel
+        bounds: view
+        onOverflowChanged: if (visible) view.menuOverflow = overflow
+        actions: [
+          { id: "edit", icon: "󰏫", text: "Edit", hint: "e", visible: !row.fromConfig },
+          { id: "save", icon: "󰆓", text: "Save as connection", detail: "To put it in a folder or make it a favorite", visible: row.fromConfig },
+          { id: "move", icon: "󰉒", text: "Move to folder…", hint: "m", visible: !row.fromConfig },
+          { id: "favorite", icon: row.conn.favorite ? "󰓎" : "󰓒", text: row.conn.favorite ? "Remove from favorites" : "Add to favorites", hint: "f", visible: !row.fromConfig },
+          { id: "copy", icon: view.copiedId === row.rowKey ? "󰄬" : "󰆏", text: view.copiedId === row.rowKey ? "Copied" : "Copy address", hint: "c" },
+          { id: "duplicate", icon: "󰆑", text: "Duplicate", visible: !row.fromConfig },
+          { id: "key", icon: "󰌆", text: "Log in with a key", detail: "Copies your SSH key to the server (asks its password once)",
+            visible: row.conn.protocol === "ssh" && !row.fromConfig && !row.conn.jumpHost, enabled: !store.terminalBusy },
+          { id: "delete", icon: "󰆴", text: "Delete…", hint: "x", danger: true, visible: !row.fromConfig }
+        ]
+        onTriggered: function(id) {
+          if (id === "edit") panel.openForm(row.conn.id, null)
+          else if (id === "save") panel.openForm("new", { name: row.conn.name, host: row.conn.host, protocol: "ssh" })
+          else if (id === "move") view.startMove(row.rowKey)
+          else if (id === "favorite") store.toggleFavorite(row.conn.id)
+          else if (id === "copy") view.copyAddress(row.conn, row.rowKey)
+          else if (id === "duplicate") {
+            var copy = store.duplicate(row.conn.id)
+            if (copy) panel.openForm(copy.id, null)
+          } else if (id === "key") store.setupSshKey(row.conn)
+          else if (id === "delete") {
+            view.closeMenus()
+            view.pendingDeleteKey = row.rowKey
+            view.selectedKey = row.rowKey
+          }
+        }
+      }
 
     HoverHandler {
       onHoveredChanged: {
@@ -203,88 +241,6 @@ Column {
             onClicked: view.primaryAction(row.conn, row.rowKey)
           }
         }
-      }
-    }
-  }
-
-  // ⋯ actions
-  Flow {
-    visible: row.menuOpen
-    width: parent.width
-    leftPadding: Style.space(48)
-    spacing: Style.space(6)
-
-    Pill {
-      visible: !row.fromConfig
-      text: "Edit"
-      iconText: "󰏫"
-      tint: panel.foreground
-      fontFamily: panel.fontFamily
-      onClicked: panel.openForm(row.conn.id, null)
-    }
-    Pill {
-      visible: !row.fromConfig
-      text: "Move to…"
-      iconText: "󰉒"
-      tooltip: "Put it in another folder (m)"
-      tint: panel.foreground
-      fontFamily: panel.fontFamily
-      onClicked: view.startMove(row.rowKey)
-    }
-    Pill {
-      visible: row.fromConfig
-      text: "Save as connection"
-      iconText: "󰆓"
-      tooltip: "Copy it into your saved connections to put it in a folder or make it a favorite"
-      tint: panel.foreground
-      fontFamily: panel.fontFamily
-      onClicked: panel.openForm("new", { name: row.conn.name, host: row.conn.host, protocol: "ssh" })
-    }
-    Pill {
-      visible: !row.fromConfig
-      text: row.conn.favorite ? "Unfavorite" : "Favorite"
-      iconText: row.conn.favorite ? "󰓎" : "󰓒"
-      tint: panel.foreground
-      fontFamily: panel.fontFamily
-      onClicked: store.toggleFavorite(row.conn.id)
-    }
-    Pill {
-      text: view.copiedId === row.rowKey ? "Copied" : "Copy address"
-      iconText: "󰆏"
-      tint: panel.foreground
-      fontFamily: panel.fontFamily
-      onClicked: view.copyAddress(row.conn, row.rowKey)
-    }
-    Pill {
-      visible: !row.fromConfig
-      text: "Duplicate"
-      iconText: "󰆑"
-      tint: panel.foreground
-      fontFamily: panel.fontFamily
-      onClicked: {
-        var copy = store.duplicate(row.conn.id)
-        if (copy) panel.openForm(copy.id, null)
-      }
-    }
-    Pill {
-      visible: row.conn.protocol === "ssh" && !row.fromConfig && !row.conn.jumpHost
-      text: "Log in with a key"
-      iconText: "󰌆"
-      tooltip: "Opens a terminal (it asks the server's password): ssh-keygen if you have no key, then ssh-copy-id"
-      tint: panel.foreground
-      enabled: !store.terminalBusy
-      fontFamily: panel.fontFamily
-      onClicked: store.setupSshKey(row.conn)
-    }
-    Pill {
-      visible: !row.fromConfig
-      text: "Delete"
-      iconText: "󰆴"
-      tint: panel.urgent
-      fontFamily: panel.fontFamily
-      onClicked: {
-        view.closeMenus()
-        view.pendingDeleteKey = row.rowKey
       }
     }
   }

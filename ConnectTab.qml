@@ -36,6 +36,9 @@ Column {
   property string passwordKey: ""
   property bool rememberPassword: true
   property bool addingFolder: false
+  // How far the open ⋯ menu sticks out below the list; the popup grows by
+  // that much so the floating menu is never cut off.
+  property real menuOverflow: 0
   property string folderError: ""
   property string copiedId: ""
   property real now: Date.now()
@@ -68,6 +71,8 @@ Column {
   readonly property bool firstRun: store.loaded && store.connections.length === 0 && store.sshHosts.length === 0 && store.folders.length === 0
 
   spacing: Style.space(10)
+
+  onMenuKeyChanged: if (menuKey === "") menuOverflow = 0
 
   function rowKey(section, item) {
     return section.kind === "folder" ? "folder|" + item.path : section.id + "|" + item.id
@@ -765,6 +770,9 @@ Column {
       required property var modelData
       width: tab.width
       spacing: Style.space(2)
+      // Above the sections after it while one of its rows has the ⋯ menu
+      // open, so the menu floats over them.
+      z: tab.menuKey.indexOf(section.modelData.kind === "folder" ? "folder|" : section.modelData.id + "|") === 0 ? 10 : 0
 
       PanelSectionHeader {
         visible: section.modelData.title !== ""
