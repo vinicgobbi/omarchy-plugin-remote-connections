@@ -395,6 +395,7 @@ Column {
           spacing: Style.space(2)
           Text {
             anchors.right: parent.right
+            textFormat: Text.PlainText
             text: view.statusText(row.conn)
             color: view.statusColor(row.conn)
             font.family: panel.fontFamily
