@@ -21,12 +21,14 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 log_dir="${XDG_STATE_HOME:-$HOME/.local/state}/omarchy-remote-connections"
 session_dir="${XDG_RUNTIME_DIR:-/run/user/$UID}/omarchy-remote-connections/sessions"
 
+# After a "--": a name is free text, and one starting with "-" would be read as
+# an option.
 notify() {
   notify-send -a "Remote Connections" -i network-server "$@" 2>/dev/null || true
 }
 
 fail() {
-  notify -u critical "Couldn't connect" "$1"
+  notify -u critical -- "Couldn't connect" "$1"
   echo "$1" >&2
   exit 1
 }
@@ -77,7 +79,7 @@ if [[ $(field .oncePassword) == "true" && $protocol != "ssh" ]]; then
   "$here/rc-secret" clear "once-$id" >/dev/null 2>&1
 elif [[ $has_secret == "true" && $protocol != "ssh" ]]; then
   password=$("$here/rc-secret" get "$id" 2>/dev/null) || {
-    notify "Keyring locked or password missing" "$name: the client will ask for the password."
+    notify -- "Keyring locked or password missing" "$name: the client will ask for the password."
     password=""
   }
 fi
@@ -141,7 +143,7 @@ run_client() {
     return 0
   fi
   if [[ -f $prompt_flag ]]; then
-    notify -u critical "$name: the server asked for credentials" \
+    notify -u critical -- "$name: the server asked for credentials" \
       "FreeRDP wanted \"$(tr -d '\n' <"$prompt_flag")\" in a terminal it doesn't have. Connect from the popup to type the password, check the user/domain in the connection, or turn off Connection bar (its client has its own dialog)."
     rm -f "$prompt_flag"
     return 1
@@ -149,7 +151,7 @@ run_client() {
   # FreeRDP exits with 12/13 (logoff/disconnect by user) on a normal close;
   # 143 is our own Disconnect (SIGTERM from bin/rc-sessions).
   if (( status != 0 && status != 12 && status != 13 && status != 143 )); then
-    notify -u critical "$name: connection ended with an error" "Exit code $status. Details: $log"
+    notify -u critical -- "$name: connection ended with an error" "Exit code $status. Details: $log"
   fi
   return "$status"
 }
@@ -203,9 +205,9 @@ case "$protocol" in
     [[ $client == xfreerdp3 ]] && args+=("/floatbar:sticky:off,default:visible,show:always")
 
     if [[ $client == sdl-freerdp3 ]]; then
-      notify "$name" "Right Shift + D disconnects · Right Shift + Enter toggles fullscreen · Right Shift + G grabs/frees the keyboard. Or use Disconnect in the Remote Connections popup."
+      notify -- "$name" "Right Shift + D disconnects · Right Shift + Enter toggles fullscreen · Right Shift + G grabs/frees the keyboard. Or use Disconnect in the Remote Connections popup."
     else
-      notify "$name" "Use the bar at the top of the window to minimize or close it. Ctrl + Alt + Enter toggles fullscreen. You can also disconnect from the Remote Connections popup."
+      notify -- "$name" "Use the bar at the top of the window to minimize or close it. Ctrl + Alt + Enter toggles fullscreen. You can also disconnect from the Remote Connections popup."
     fi
 
     printf '%s\n' "${args[@]}" | run_client "$client" /args-from:stdin
@@ -221,7 +223,7 @@ case "$protocol" in
       export VNC_PASSWORD=$password
       [[ -n $user ]] && export VNC_USERNAME=$user
     fi
-    notify "$name" "F8 opens the viewer menu (Exit viewer, fullscreen). Or use Disconnect in the Remote Connections popup."
+    notify -- "$name" "F8 opens the viewer menu (Exit viewer, fullscreen). Or use Disconnect in the Remote Connections popup."
     run_client "$client" "${args[@]}"
     ;;
 
