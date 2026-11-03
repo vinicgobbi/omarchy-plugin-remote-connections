@@ -48,6 +48,11 @@ has_secret=$(field .hasSecret)
 
 [[ -n $host ]] || fail "Connection has no host"
 
+# The id also names this session's record (see run_client): "../" in it would
+# overwrite and then delete a file anywhere. Same rule as Model.js and
+# bin/rc-sessions.
+[[ $id =~ ^[A-Za-z0-9_-][A-Za-z0-9._:-]*$ ]] || fail "Invalid connection id."
+
 # connections.json can be edited by hand or come from someone else, so
 # everything that ends up on a client's command line is checked again here
 # (Model.validate does the same for the form):

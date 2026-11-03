@@ -24,6 +24,10 @@ function protocolLabel(protocol) {
   return PROTOCOL_LABELS[protocol] || String(protocol || "").toUpperCase()
 }
 
+// An id also names a file (bin/rc-connect's session record), so it can't climb
+// out of that folder. Same rule as bin/rc-connect and bin/rc-sessions.
+var ID_RE = /^[A-Za-z0-9_-][A-Za-z0-9._:-]*$/
+
 function newId() {
   // RFC 4122 v4 shape; Math.random is fine here, the id only has to be
   // unique within one user's list (it's also the keyring lookup key).
@@ -61,7 +65,7 @@ function normalize(raw) {
   var vnc = c.vnc && typeof c.vnc === "object" ? c.vnc : {}
   var host = clean(c.host)
   return {
-    id: clean(c.id) || newId(),
+    id: ID_RE.test(clean(c.id)) ? clean(c.id) : newId(),
     name: clean(c.name) || host,
     protocol: protocol,
     host: host,

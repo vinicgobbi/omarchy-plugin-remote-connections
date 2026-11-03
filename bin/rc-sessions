@@ -18,7 +18,7 @@ umask 077
 dir="${XDG_RUNTIME_DIR:-/run/user/$UID}/omarchy-remote-connections/sessions"
 
 valid_id() {
-  [[ $1 =~ ^[A-Za-z0-9._:-]+$ ]]
+  [[ $1 =~ ^[A-Za-z0-9_-][A-Za-z0-9._:-]*$ ]]
 }
 
 # pid of a live session (and still one of our clients), or nothing.
