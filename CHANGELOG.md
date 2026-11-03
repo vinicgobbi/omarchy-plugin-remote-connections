@@ -1,3 +1,11 @@
+## v0.2.1 (2026-11-03)
+
+### Fix
+
+- **seguranca**: mostra o jump host como texto puro
+- **seguranca**: nome de conexão não vira opção do notify-send
+- **seguranca**: recusa id de conexão que sai da pasta de sessões
+
 ## v0.2.0 (2026-10-03)
 
 ### Feat
